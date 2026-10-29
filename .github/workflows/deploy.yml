@@ -1,0 +1,76 @@
+name: Deploy
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  NODE_VERSION: 26.0.0
+jobs:
+  check-secrets:
+    name: Check required secrets
+    runs-on: ubuntu-latest
+    outputs:
+      has_play_store_secrets: ${{ steps.check_play.outputs.has_secrets }}
+    steps:
+      - name: Check Play Store secrets
+        id: check_play
+        env:
+          PLAY_STORE_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$PLAY_STORE_JSON" ]; then
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          fi
+  android-deploy:
+    name: Deploy Android (Play internal)
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_play_store_secrets == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Setup Java
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: zulu
+          java-version: "17"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Decode keystore and build release AAB
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+          cd android
+          ./gradlew bundleRelease --no-daemon
+      - name: Upload to Play (internal track)
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          packageName: com.timeclimbers.playgrouditor
+          releaseFiles: android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed

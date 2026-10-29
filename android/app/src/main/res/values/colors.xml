@@ -1,0 +1,5 @@
+<resources>
+    <color name="pg_background">#FAF8F5</color>
+    <color name="pg_accent">#3A5A40</color>
+    <bool name="pg_light_bars">true</bool>
+</resources>

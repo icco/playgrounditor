@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns:
+          - '*'
+    ignore:
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+      - dependency-name: react
+      - dependency-name: '@babel/core'
+        update-types:
+          - version-update:semver-major
+      - dependency-name: '@babel/preset-env'
+        update-types:
+          - version-update:semver-major
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - '*'

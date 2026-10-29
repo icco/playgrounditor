@@ -1,35 +1,91 @@
-# Gradle files
-.gradle/
+# OSX
+.DS_Store
+
+# Xcode
 build/
-.kotlin/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+**/.xcode.env.local
 
-# Local configuration file (sdk path, etc)
+# Android/IntelliJ
+build/
+.idea
+.gradle
 local.properties
-
-# Log/OS Files
-*.log
-
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.aab
-*.apk
-output-metadata.json
-
-# IntelliJ
 *.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
-
-# Keystore files
-*.jks
-*.keystore
-
-# Google Services (e.g. APIs or Firebase)
-google-services.json
-
-# Android Profiling
 *.hprof
+.cxx/
+*.keystore
+!debug.keystore
+.kotlin/
+*.class
+*.ctxt
+*.ear
+*.jar
+*.log
+*.nar
+*.rar
+*.tar.gz
+*.war
+*.zip
+.externalNativeBuild
+/captures
+hs_err_pid*
+!gradle/wrapper/gradle-wrapper.jar
+
+# node.js
+node_modules/
+npm-debug.log
+pnpm-debug.log
+yarn-error.log
+
+# fastlane
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots
+**/fastlane/test_output
+
+# Bundle artifact
+*.jsbundle
+
+# Ruby / CocoaPods
+**/Pods/
+/vendor/bundle/
+
+# Metro
+.metro-health-check*
+
+# testing
+/coverage
+
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Env (secrets)
+.env
+.env.local
+!.env.example
+
+# iOS export (generated in CI)
+ios/ExportOptions.plist
+
+# React Native / Metro
+.bundle/

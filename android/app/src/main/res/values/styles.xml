@@ -1,0 +1,15 @@
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@color/pg_background</item>
+        <item name="android:statusBarColor">@color/pg_background</item>
+        <item name="android:navigationBarColor">@color/pg_background</item>
+        <item name="android:windowLightStatusBar">@bool/pg_light_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/pg_light_bars</item>
+        <item name="android:colorAccent">@color/pg_accent</item>
+    </style>
+
+</resources>
