@@ -13,10 +13,7 @@ plugins:
           release: patch
         - type: perf
           release: patch
-        - message: '*'
-          release: patch
-        - subject: '*'
-          release: patch
+        - release: patch
         - scope: no-release
           release: false
   - '@semantic-release/release-notes-generator'
