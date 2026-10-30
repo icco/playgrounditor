@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   RefreshControl,
@@ -11,7 +12,8 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { Entry, GitHubError, Repo, isMarkdown } from '../lib/github';
+import { Entry, GitHubError, Repo, isEditable, isMarkdown } from '../lib/github';
+import { useFocusEffect, usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 
@@ -21,6 +23,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const { repoFullName, path: initialPath = '' } = route.params;
   const { github } = useAuth();
   const [repo, setRepo] = useState<Repo | null>(null);
+  const repoRef = useRef<Repo | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [loading, setLoading] = useState(true);
@@ -29,33 +32,51 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const [modalVisible, setModalVisible] = useState(false);
   const [newFileName, setNewFileName] = useState('');
 
+  const latestLoad = useRef(0);
+
   const loadData = useCallback(async () => {
     if (!github) return;
+    const load = ++latestLoad.current;
     try {
       setError(null);
-      const r = repo || (await github.repo(repoFullName));
+      const r = repoRef.current || (await github.repo(repoFullName));
+      repoRef.current = r;
       setRepo(r);
       const list = await github.list(repoFullName, currentPath, r.default_branch);
-      setEntries(list);
+      if (load === latestLoad.current) setEntries(list);
     } catch (e: unknown) {
+      if (load !== latestLoad.current) return;
       const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to load directory';
+      setEntries([]);
       setError(msg);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (load === latestLoad.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [github, repo, repoFullName, currentPath]);
+  }, [github, repoFullName, currentPath]);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
+  useFocusEffect(
+    useCallback(() => {
       void loadData();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [loadData]);
+    }, [loadData]),
+  );
+
+  usePreventRemove(currentPath !== '', () => {
+    openDir(currentPath.split('/').slice(0, -1).join('/'));
+  });
+
+  function openDir(path: string) {
+    setLoading(true);
+    setCurrentPath(path);
+  }
 
   function handlePress(item: Entry) {
     if (item.type === 'dir') {
-      setCurrentPath(item.path);
+      openDir(item.path);
+    } else if (item.type !== 'file' || !isEditable(item.name)) {
+      Alert.alert('Cannot edit', `${item.name} is not a text file this app can edit.`);
     } else {
       navigation.navigate('Editor', {
         repoFullName,
@@ -88,7 +109,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
     <View style={styles.container}>
       <View style={styles.breadcrumbRow}>
         <TouchableOpacity
-          onPress={() => setCurrentPath('')}
+          onPress={() => openDir('')}
           style={styles.crumbBtn}
         >
           <Text style={styles.crumbRoot}>{repoFullName}</Text>
@@ -98,7 +119,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
           return (
             <React.Fragment key={subPath}>
               <Text style={styles.crumbSep}>/</Text>
-              <TouchableOpacity onPress={() => setCurrentPath(subPath)} style={styles.crumbBtn}>
+              <TouchableOpacity onPress={() => openDir(subPath)} style={styles.crumbBtn}>
                 <Text style={styles.crumbText}>{crumb}</Text>
               </TouchableOpacity>
             </React.Fragment>
