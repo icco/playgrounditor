@@ -4,6 +4,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,7 +13,8 @@ import {
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { useAuth } from '../context/AuthContext';
-import { GitHubError } from '../lib/github';
+import { GitHubError, isMarkdown } from '../lib/github';
+import { usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 
@@ -28,6 +30,17 @@ export function EditorScreen({ route, navigation }: Props) {
   const [preview, setPreview] = useState(false);
   const [modeModal, setModeModal] = useState(false);
   const [commitMsg, setCommitMsg] = useState(`docs: update ${path}`);
+  const [savedText, setSavedText] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
+  const markdown = isMarkdown(path);
+  const dirty = !loading && !loadFailed && text !== savedText;
+
+  usePreventRemove(dirty, ({ data }) => {
+    Alert.alert('Discard changes?', 'Your edits have not been saved.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(data.action) },
+    ]);
+  });
 
   useEffect(() => {
     async function load() {
@@ -35,16 +48,18 @@ export function EditorScreen({ route, navigation }: Props) {
       try {
         const file = await github.read(repoFullName, path, defaultBranch);
         setText(file.text);
+        setSavedText(file.text);
         setSha(file.sha);
       } catch (e: unknown) {
         const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to read file';
-        Alert.alert('Error', msg);
+        setLoadFailed(true);
+        Alert.alert('Error', msg, [{ text: 'OK', onPress: () => navigation.goBack() }]);
       } finally {
         setLoading(false);
       }
     }
     void load();
-  }, [repoFullName, path, defaultBranch, github, isNew]);
+  }, [repoFullName, path, defaultBranch, github, isNew, navigation]);
 
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
   const charCount = text.length;
@@ -64,12 +79,13 @@ export function EditorScreen({ route, navigation }: Props) {
         mode,
       });
       setSha(res.sha);
+      setSavedText(text);
       if (res.prUrl) {
         Alert.alert('Success', `Pull request opened:\n${res.prUrl}`, [
           { text: 'OK', onPress: () => navigation.goBack() },
         ]);
       } else {
-        Alert.alert('Success', 'Changes committed directly to main!', [
+        Alert.alert('Success', `Changes committed directly to ${defaultBranch}.`, [
           { text: 'OK', onPress: () => navigation.goBack() },
         ]);
       }
@@ -91,18 +107,20 @@ export function EditorScreen({ route, navigation }: Props) {
           {path}
         </Text>
         <View style={styles.topRight}>
+          {markdown ? (
+            <TouchableOpacity
+              style={[styles.toggleBtn, preview && styles.toggleBtnActive]}
+              onPress={() => setPreview(!preview)}
+            >
+              <Text style={[styles.toggleText, preview && styles.toggleTextActive]}>
+                {preview ? 'Edit' : 'Preview'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
-            style={[styles.toggleBtn, preview && styles.toggleBtnActive]}
-            onPress={() => setPreview(!preview)}
-          >
-            <Text style={[styles.toggleText, preview && styles.toggleTextActive]}>
-              {preview ? 'Edit' : 'Preview'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.saveBtn}
+            style={[styles.saveBtn, (loading || loadFailed) && styles.saveBtnDisabled]}
             onPress={() => setModeModal(true)}
-            disabled={saving}
+            disabled={saving || loading || loadFailed}
           >
             {saving ? (
               <ActivityIndicator size="small" color="#FAF8F5" />
@@ -118,19 +136,19 @@ export function EditorScreen({ route, navigation }: Props) {
           <ActivityIndicator size="large" color="#3A5A40" />
         </View>
       ) : preview ? (
-        <View style={styles.previewContainer}>
+        <ScrollView style={styles.previewContainer} contentContainerStyle={styles.previewContent}>
           <Markdown>{text || '*Empty file*'}</Markdown>
-        </View>
+        </ScrollView>
       ) : (
         <TextInput
           style={styles.editor}
           multiline
           value={text}
           onChangeText={setText}
-          placeholder="Start writing markdown..."
+          placeholder={markdown ? 'Start writing markdown...' : 'Start writing...'}
           placeholderTextColor="#8C929D"
-          autoCapitalize="sentences"
-          autoCorrect
+          autoCapitalize={markdown ? 'sentences' : 'none'}
+          autoCorrect={markdown}
           textAlignVertical="top"
         />
       )}
@@ -151,6 +169,7 @@ export function EditorScreen({ route, navigation }: Props) {
               value={commitMsg}
               onChangeText={setCommitMsg}
               placeholder="docs: update..."
+              placeholderTextColor="#8C929D"
             />
             <TouchableOpacity
               style={styles.modalOption}
@@ -163,7 +182,7 @@ export function EditorScreen({ route, navigation }: Props) {
               style={[styles.modalOption, styles.modalOptionDirect]}
               onPress={() => void handleSave('direct')}
             >
-              <Text style={styles.modalOptionTitle}>Commit to Main</Text>
+              <Text style={styles.modalOptionTitle}>Commit to {defaultBranch}</Text>
               <Text style={styles.modalOptionDesc}>Push directly to {defaultBranch}</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -248,7 +267,12 @@ const styles = StyleSheet.create({
   },
   previewContainer: {
     flex: 1,
+  },
+  previewContent: {
     padding: 16,
+  },
+  saveBtnDisabled: {
+    opacity: 0.5,
   },
   statusBar: {
     paddingVertical: 8,

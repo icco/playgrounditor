@@ -1,5 +1,27 @@
 import { encodeBase64, decodeBase64 } from '../src/lib/base64';
-import { branchName, sortEntries, isMarkdown } from '../src/lib/github';
+import { GitHub, GitHubError, branchName, sortEntries, isMarkdown } from '../src/lib/github';
+
+function jsonResponse(body: unknown): Response {
+  return { ok: true, json: () => Promise.resolve(body) } as Response;
+}
+
+describe('GitHub client', () => {
+  it('follows repository pages until a short page', async () => {
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(Array.from({ length: 100 }, (_, i) => ({ full_name: `alice/${i}` }))))
+      .mockResolvedValueOnce(jsonResponse([{ full_name: 'alice/last' }]));
+    const repos = await new GitHub('token', fetcher).repos();
+    expect(repos).toHaveLength(101);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenLastCalledWith(expect.stringContaining('page=2'), expect.anything());
+  });
+
+  it('refuses files GitHub returns without base64 content', async () => {
+    const fetcher = jest.fn().mockResolvedValue(jsonResponse({ path: 'big.md', sha: '1', content: '', encoding: 'none' }));
+    await expect(new GitHub('token', fetcher).read('alice/repo', 'big.md', 'main')).rejects.toBeInstanceOf(GitHubError);
+  });
+});
 
 describe('base64 UTF-8 encoding', () => {
   it('encodes and decodes normal ascii and unicode strings with emoji', () => {
