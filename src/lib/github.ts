@@ -80,8 +80,15 @@ export class GitHub {
     return this.req<User>('/user');
   }
 
-  repos(): Promise<Repo[]> {
-    return this.req<Repo[]>('/user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member');
+  async repos(): Promise<Repo[]> {
+    const all: Repo[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await this.req<Repo[]>(
+        `/user/repos?sort=pushed&per_page=100&page=${page}&affiliation=owner,collaborator,organization_member`,
+      );
+      all.push(...batch);
+      if (batch.length < 100) return all;
+    }
   }
 
   repo(fullName: string): Promise<Repo> {
@@ -96,9 +103,13 @@ export class GitHub {
   }
 
   async read(fullName: string, path: string, ref: string): Promise<FileContent> {
-    const file = await this.req<{ path: string; sha: string; content: string }>(
+    const file = await this.req<{ path: string; sha: string; content: string; encoding: string }>(
       `/repos/${fullName}/contents/${encodePath(path)}?ref=${encodeURIComponent(ref)}`,
     );
+    // Files over 1 MB come back with empty content; saving that would wipe the file.
+    if (file.encoding !== 'base64') {
+      throw new GitHubError('This file is too large to edit here.', 413);
+    }
     return { path: file.path, sha: file.sha, text: decodeBase64(file.content) };
   }
 
@@ -203,6 +214,8 @@ export function startDeviceFlow(fetcher: typeof fetch = fetch): Promise<DeviceCo
 }
 
 export type PollResult = { token: string } | { pending: true; slowDown?: boolean };
+
+export const SLOW_DOWN_PENALTY_MS = 5000;
 
 export async function pollDeviceFlow(deviceCode: string, fetcher: typeof fetch = fetch): Promise<PollResult> {
   const r = await postForm<{ access_token?: string; error?: string; error_description?: string }>(

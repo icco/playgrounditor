@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { version } from '../../package.json';
 
 export function SettingsScreen() {
   const { user, logout } = useAuth();
@@ -18,9 +19,8 @@ export function SettingsScreen() {
       </View>
 
       <View style={styles.aboutCard}>
-        <Text style={styles.aboutTitle}>Playgrouditor v0.1.0</Text>
+        <Text style={styles.aboutTitle}>Playgrouditor v{version}</Text>
         <Text style={styles.aboutText}>Minimal mobile markdown editor for GitHub.</Text>
-        <Text style={styles.aboutText}>Under timeclimbers package setup.</Text>
       </View>
     </View>
   );

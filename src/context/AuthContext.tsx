@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import * as Keychain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { GitHub, User } from '../lib/github';
+import { GitHub, GitHubError, User } from '../lib/github';
 
 interface AuthContextType {
   token: string | null;
@@ -29,21 +29,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     async function init() {
       try {
-        const creds = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE });
-        if (creds) {
-          const t = creds.password;
-          const gh = new GitHub(t);
-          const u = await gh.user();
-          setToken(t);
-          setUser(u);
-          setGithub(gh);
-        }
         const stored = await AsyncStorage.getItem(RECENT_KEY);
         if (stored) {
           setRecentRepos(JSON.parse(stored) as string[]);
         }
-      } catch {
-        // Not signed in or expired token
+        const creds = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE });
+        if (creds) {
+          const t = creds.password;
+          const gh = new GitHub(t);
+          try {
+            setUser(await gh.user());
+          } catch (e: unknown) {
+            if (e instanceof GitHubError && e.status === 401) {
+              await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
+              return;
+            }
+            // Offline at launch must not sign the user out.
+            console.warn('Could not load GitHub user', e);
+          }
+          setToken(t);
+          setGithub(gh);
+        }
+      } catch (e: unknown) {
+        console.error('Failed to restore session', e);
       } finally {
         setLoading(false);
       }

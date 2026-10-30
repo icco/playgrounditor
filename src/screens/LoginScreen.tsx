@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   StyleSheet,
   Text,
@@ -9,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { startDeviceFlow, pollDeviceFlow, DeviceCode, GitHubError } from '../lib/github';
+import { startDeviceFlow, pollDeviceFlow, DeviceCode, GitHubError, SLOW_DOWN_PENALTY_MS } from '../lib/github';
 import { useAuth } from '../context/AuthContext';
 
 export function LoginScreen() {
@@ -18,6 +19,11 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualToken, setManualToken] = useState('');
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+  }, []);
 
   async function handleStartDevice() {
     setLoading(true);
@@ -33,31 +39,47 @@ export function LoginScreen() {
     }
   }
 
+  function stopPolling() {
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    pollTimer.current = null;
+  }
+
+  function failDeviceFlow(message: string) {
+    stopPolling();
+    setDeviceCode(null);
+    setLoading(false);
+    setError(message);
+  }
+
   function startPolling(dc: DeviceCode) {
-    const intervalMs = Math.max(dc.interval || 5, 5) * 1000;
+    let intervalMs = Math.max(dc.interval || 5, 5) * 1000;
     const expiresAt = Date.now() + dc.expires_in * 1000;
 
-    const timer = setInterval(() => {
+    async function poll() {
       if (Date.now() > expiresAt) {
-        clearInterval(timer);
-        setDeviceCode(null);
-        setError('Sign in timed out. Try again.');
+        failDeviceFlow('Sign in timed out. Try again.');
         return;
       }
-      void pollDeviceFlow(dc.device_code)
-        .then(res => {
-          if ('token' in res) {
-            clearInterval(timer);
-            void loginWithToken(res.token);
-          }
-        })
-        .catch((e: unknown) => {
-          clearInterval(timer);
-          setDeviceCode(null);
-          const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Sign in failed';
-          setError(msg);
-        });
-    }, intervalMs);
+      try {
+        const res = await pollDeviceFlow(dc.device_code);
+        if ('token' in res) {
+          await loginWithToken(res.token);
+          return;
+        }
+        if (res.slowDown) intervalMs += SLOW_DOWN_PENALTY_MS;
+        pollTimer.current = setTimeout(() => void poll(), intervalMs);
+      } catch (e: unknown) {
+        failDeviceFlow(e instanceof GitHubError || e instanceof Error ? e.message : 'Sign in failed');
+      }
+    }
+
+    pollTimer.current = setTimeout(() => void poll(), intervalMs);
+  }
+
+  function cancelDeviceFlow() {
+    stopPolling();
+    setDeviceCode(null);
+    setLoading(false);
   }
 
   async function handleManualLogin() {
@@ -117,15 +139,20 @@ export function LoginScreen() {
           </View>
         ) : (
           <View style={styles.codeSection}>
-            <Text style={styles.instruction}>1. Open github.com/login/device</Text>
+            <TouchableOpacity onPress={() => void Linking.openURL(deviceCode.verification_uri)}>
+              <Text style={[styles.instruction, styles.link]}>1. Open github.com/login/device</Text>
+            </TouchableOpacity>
             <Text style={styles.instruction}>2. Enter this code:</Text>
             <View style={styles.codeBox}>
-              <Text style={styles.codeText}>{deviceCode.user_code}</Text>
+              <Text style={styles.codeText} selectable>{deviceCode.user_code}</Text>
             </View>
             <View style={styles.waitingRow}>
               <ActivityIndicator size="small" color="#3A5A40" />
               <Text style={styles.waitingText}>Waiting for authorization...</Text>
             </View>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelDeviceFlow}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -216,6 +243,20 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginBottom: 8,
     textAlign: 'center',
+  },
+  link: {
+    color: '#3A5A40',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  cancelButton: {
+    marginTop: 16,
+    padding: 10,
+  },
+  cancelText: {
+    color: '#6B7280',
+    fontSize: 14,
+    fontWeight: '600',
   },
   codeBox: {
     backgroundColor: '#F3F4F6',

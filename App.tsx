@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
@@ -40,7 +40,14 @@ function MainNavigator() {
             <Stack.Screen
               name="RepoList"
               component={RepoListScreen}
-              options={{ title: 'Playgrouditor' }}
+              options={({ navigation }) => ({
+                title: 'Playgrouditor',
+                headerRight: () => (
+                  <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
+                    <Text style={styles.headerButton}>Settings</Text>
+                  </TouchableOpacity>
+                ),
+              })}
             />
             <Stack.Screen
               name="FileBrowser"
@@ -78,5 +85,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#FAF8F5',
+  },
+  headerButton: {
+    color: '#3A5A40',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
