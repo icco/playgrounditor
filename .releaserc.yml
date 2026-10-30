@@ -1,0 +1,36 @@
+branches:
+  - main
+plugins:
+  - - '@semantic-release/commit-analyzer'
+    - releaseRules:
+        - breaking: true
+          release: major
+        - revert: true
+          release: patch
+        - type: feat
+          release: minor
+        - type: fix
+          release: patch
+        - type: perf
+          release: patch
+        - release: patch
+        - scope: no-release
+          release: false
+  - '@semantic-release/release-notes-generator'
+  - '@semantic-release/changelog'
+  - - '@semantic-release/npm'
+    - npmPublish: false
+  - - '@semantic-release/exec'
+    - prepareCmd: >-
+        cd android && VERSION_NAME=${nextRelease.version} VERSION_CODE=${nextRelease.version.split('.').reduce((code, part) => code * 1000 + Number(part), 0)} ./gradlew assembleRelease --no-daemon
+  - - '@semantic-release/github'
+    - successComment: false
+      failComment: false
+      releasedLabels: false
+      assets:
+        - path: android/app/build/outputs/apk/release/app-release.apk
+          name: playgrouditor-${nextRelease.gitTag}.apk
+  - - '@semantic-release/git'
+    - assets:
+        - CHANGELOG.md
+        - package.json

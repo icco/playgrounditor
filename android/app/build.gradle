@@ -83,7 +83,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode((System.getenv("VERSION_CODE") ?: "1").toInteger())
-        versionName "0.1.0"
+        versionName(System.getenv("VERSION_NAME") ?: "0.1.0")
     }
     signingConfigs {
         debug {
