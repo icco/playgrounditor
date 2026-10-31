@@ -20,7 +20,7 @@ import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FileBrowser'>;
 
-type SortMode = 'name' | 'date' | 'type';
+type SortMode = 'name' | 'modified';
 
 export function FileBrowserScreen({ route, navigation }: Props) {
   const { repoFullName, path: initialPath = '' } = route.params;
@@ -35,7 +35,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [newFileName, setNewFileName] = useState('');
-  const [sortMode, setSortMode] = useState<SortMode>('type');
+  const [sortMode, setSortMode] = useState<SortMode>('name');
 
   const latestLoad = useRef(0);
 
@@ -339,7 +339,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
 
       <View style={styles.sortRow}>
         <Text style={styles.sortLabel}>Sort:</Text>
-        {(['type', 'name', 'date'] as SortMode[]).map(mode => {
+        {(['name', 'modified'] as SortMode[]).map(mode => {
           const active = sortMode === mode;
           return (
             <TouchableOpacity
@@ -348,7 +348,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
               onPress={() => setSortMode(mode)}
             >
               <Text style={[styles.sortBtnText, active && styles.sortBtnTextActive]}>
-                {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                {mode === 'name' ? 'Name' : 'Modified'}
               </Text>
             </TouchableOpacity>
           );
