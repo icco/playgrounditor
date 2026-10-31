@@ -1,8 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { RepoListScreen } from './src/screens/RepoListScreen';
 import { FileBrowserScreen } from './src/screens/FileBrowserScreen';
@@ -14,23 +15,44 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function MainNavigator() {
   const { token, loading } = useAuth();
+  const { theme } = useTheme();
 
   if (loading) {
+    const styles = StyleSheet.create({
+      center: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: theme.colors.background,
+      },
+    });
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#3A5A40" />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }
 
+  const navTheme = {
+    ...(theme.mode === 'dark' ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(theme.mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors),
+      background: theme.colors.background,
+      card: theme.colors.surface,
+      text: theme.colors.text,
+      border: theme.colors.border,
+      primary: theme.colors.primary,
+    },
+  };
+
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navTheme}>
       <Stack.Navigator
         screenOptions={{
-          headerStyle: { backgroundColor: '#FFFFFF' },
-          headerTintColor: '#16161A',
-          headerTitleStyle: { fontWeight: '700' },
-          contentStyle: { backgroundColor: '#FAF8F5' },
+          headerStyle: { backgroundColor: theme.colors.surface },
+          headerTintColor: theme.colors.text,
+          headerTitleStyle: { fontWeight: '700', color: theme.colors.text },
+          contentStyle: { backgroundColor: theme.colors.background },
         }}
       >
         {!token ? (
@@ -43,9 +65,7 @@ function MainNavigator() {
               options={({ navigation }) => ({
                 title: 'Playgrounditor',
                 headerRight: () => (
-                  <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
-                    <Text style={styles.headerButton}>Settings</Text>
-                  </TouchableOpacity>
+                  <></>
                 ),
               })}
             />
@@ -73,22 +93,10 @@ function MainNavigator() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <MainNavigator />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <MainNavigator />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FAF8F5',
-  },
-  headerButton: {
-    color: '#3A5A40',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});
