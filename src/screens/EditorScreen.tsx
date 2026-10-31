@@ -17,7 +17,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
-import { GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isMarkdown } from '../lib/github';
+import { GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isMarkdown, isTransient } from '../lib/github';
+import { clearOpenFile, notifyOutbox, queueCommit, setOpenFile } from '../lib/outbox';
 import { cacheFile, deleteDraft, getCachedFile, getDraft, saveDraft } from '../lib/localFiles';
 import { errorMessage } from '../lib/errors';
 import { queryClient, useIsOnline } from '../lib/queryClient';
@@ -85,10 +86,15 @@ export function EditorScreen({ route, navigation }: Props) {
   }, [persistDraftLogged]);
 
   useEffect(() => {
+    setOpenFile(repoFullName, path);
     return () => {
-      if (latest.current.dirty) persistDraftLogged();
+      clearOpenFile();
+      const saved = latest.current.dirty ? persistDraft() : Promise.resolve();
+      saved
+        .catch((e: unknown) => console.error('Could not save draft', e))
+        .finally(notifyOutbox);
     };
-  }, [persistDraftLogged]);
+  }, [repoFullName, path, persistDraft]);
 
   usePreventRemove(dirty, ({ data }) => {
     Alert.alert('Leave this file?', 'Your edits have not been committed.', [
@@ -153,7 +159,9 @@ export function EditorScreen({ route, navigation }: Props) {
         // A draft keeps its original base so a commit fails with a conflict if the file moved on.
         setSha(draft && draft.text !== server ? draft.baseSha : base?.sha);
         setRestoredDraft(!!draft && draft.text !== server);
-        if (fetchError) setNotice('Showing the copy saved on this device.');
+        if (draft?.sendError) setNotice(`Not sent: ${draft.sendError}`);
+        else if (draft?.queued) setNotice('Queued to send when you leave this file while online.');
+        else if (fetchError) setNotice('Showing the copy saved on this device.');
         else if (draft?.baseSha && base && draft.baseSha !== base.sha) {
           setNotice('This file changed on GitHub since your draft was started.');
         }
@@ -203,12 +211,38 @@ export function EditorScreen({ route, navigation }: Props) {
     setNotice(null);
   }
 
+  async function queueSave(mode: SaveMode, committed: string, baseSha?: string) {
+    leavingWithoutDraft.current = true;
+    await queueCommit({
+      repoFullName,
+      path,
+      defaultBranch,
+      text: committed,
+      baseSha,
+      queued: { mode, message: commitMsg.trim() || `docs: update ${path}` },
+    });
+    setSavedText(committed);
+    Alert.alert('Queued', 'This commit will be sent when you are back online.', [
+      { text: 'OK', onPress: () => navigation.goBack() },
+    ]);
+  }
+
   async function handleSave(mode: SaveMode, shaOverride?: string) {
-    if (!github) return;
     const committed = latest.current.text;
     const baseSha = shaOverride ?? sha;
     setSaving(true);
     setSaveDialog(false);
+    if (!github || !online) {
+      try {
+        await queueSave(mode, committed, baseSha);
+      } catch (e: unknown) {
+        leavingWithoutDraft.current = false;
+        Alert.alert('Could not queue commit', errorMessage(e, 'Could not save on this device'));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const repo = {
         full_name: repoFullName,
@@ -229,7 +263,12 @@ export function EditorScreen({ route, navigation }: Props) {
       finishSave(committed, res.prUrl);
     } catch (e: unknown) {
       persistDraftLogged();
-      if (isConflict(e, !!baseSha)) {
+      if (isTransient(e)) {
+        await queueSave(mode, committed, baseSha).catch((err: unknown) => {
+          leavingWithoutDraft.current = false;
+          Alert.alert('Could not queue commit', errorMessage(err, 'Could not save on this device'));
+        });
+      } else if (isConflict(e, !!baseSha)) {
         Alert.alert('File changed on GitHub', 'Someone else updated this file. Overwrite their version with yours?', [
           { text: 'Keep editing', style: 'cancel' },
           {
@@ -365,7 +404,7 @@ export function EditorScreen({ route, navigation }: Props) {
     [theme, insets.bottom],
   );
 
-  const saveDisabled = saving || loading || !!loadError || !online;
+  const saveDisabled = saving || loading || !!loadError;
 
   return (
     <KeyboardAvoidingView behavior="padding" style={styles.container}>
@@ -448,7 +487,7 @@ export function EditorScreen({ route, navigation }: Props) {
       <Modal visible={saveDialog} transparent animationType="fade" onRequestClose={() => setSaveDialog(false)}>
         <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Save Changes</Text>
+            <Text style={styles.modalTitle}>{online ? 'Save Changes' : 'Queue for when online'}</Text>
             <Text style={styles.modalLabel}>Commit message</Text>
             <TextInput
               style={styles.modalInput}

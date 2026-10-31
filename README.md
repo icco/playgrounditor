@@ -12,7 +12,7 @@ Download the APK from the [latest release](https://github.com/icco/playgroundito
 2. Pick a repository and browse to a file, or tap + to start a new Markdown file.
 3. Tap Save, then open a pull request or commit to the default branch.
 
-Repositories, folders and recently opened files stay available offline. Edits are saved on the device as drafts, and you commit them once you are back online. Signing out deletes all of this.
+Repositories, folders and recently opened files stay available offline. Edits are saved on the device as drafts. Tapping Save offline queues the commit and sends it when you reconnect; if the file changed on GitHub meanwhile, it stays a draft marked "Not sent". Signing out deletes all of this, queued commits included.
 
 ## Development
 

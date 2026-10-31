@@ -6,6 +6,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const MODIFIED_BATCH_SIZE = 5;
 
 export const NETWORK_ERROR_STATUS = 0;
+// The commit landed, so this must never count as transient and be sent twice.
+const PARTIAL_COMMIT_STATUS = 424;
 
 export class GitHubError extends Error {
   constructor(
@@ -186,7 +188,7 @@ export class GitHub {
         const reason = e instanceof Error ? e.message : 'unknown error';
         throw new GitHubError(
           `Committed to ${branch}, but the pull request could not be opened: ${reason}`,
-          e instanceof GitHubError ? e.status : 0,
+          PARTIAL_COMMIT_STATUS,
         );
       }
     }

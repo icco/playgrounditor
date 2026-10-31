@@ -1,5 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { AppState, ToastAndroid } from 'react-native';
+import { onlineManager } from '@tanstack/react-query';
 import * as Keychain from 'react-native-keychain';
+import { flushOutbox, subscribeOutbox } from '../lib/outbox';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GitHub, User } from '../lib/github';
 import { clearLocalFiles } from '../lib/localFiles';
@@ -81,6 +84,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return AsyncStorage.setItem(USER_KEY, JSON.stringify(u));
       })
       .catch((e: unknown) => console.warn('Could not refresh GitHub user', e));
+  }, [github]);
+
+  useEffect(() => {
+    if (!github) return;
+    const flush = () => {
+      if (!onlineManager.isOnline()) return;
+      flushOutbox(github, draft => {
+        ToastAndroid.show(`Sent ${draft.path}`, ToastAndroid.SHORT);
+        void queryClient.invalidateQueries({ queryKey: ['dir', draft.repoFullName] });
+        void queryClient.invalidateQueries({ queryKey: ['modified', draft.repoFullName] });
+      }).catch((e: unknown) => console.error('Could not send queued commits', e));
+    };
+    flush();
+    const unsubscribeOnline = onlineManager.subscribe(flush);
+    const unsubscribeQueue = subscribeOutbox(flush);
+    const appState = AppState.addEventListener('change', state => {
+      if (state === 'active') flush();
+    });
+    return () => {
+      unsubscribeOnline();
+      unsubscribeQueue();
+      appState.remove();
+    };
   }, [github]);
 
   const loginWithToken = useCallback(async (t: string) => {

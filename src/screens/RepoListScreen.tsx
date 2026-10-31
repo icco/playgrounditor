@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
 import { errorMessage } from '../lib/errors';
 import { Draft, listDrafts } from '../lib/localFiles';
+import { subscribeOutbox } from '../lib/outbox';
 import { useIsOnline } from '../lib/queryClient';
 import { RootStackParamList } from '../types';
 
@@ -42,13 +43,18 @@ export function RepoListScreen({ navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      listDrafts()
-        .then(list => {
-          if (active) setDrafts(list);
-        })
-        .catch((e: unknown) => console.error('Could not list drafts', e));
+      const refresh = () => {
+        listDrafts()
+          .then(list => {
+            if (active) setDrafts(list);
+          })
+          .catch((e: unknown) => console.error('Could not list drafts', e));
+      };
+      refresh();
+      const unsubscribe = subscribeOutbox(refresh);
       return () => {
         active = false;
+        unsubscribe();
       };
     }, []),
   );
@@ -241,7 +247,10 @@ export function RepoListScreen({ navigation }: Props) {
                     onPress={() => openDraft(d)}
                   >
                     <Text style={styles.repoName} numberOfLines={1}>{d.path}</Text>
-                    <Text style={styles.repoDesc} numberOfLines={1}>{d.repoFullName}</Text>
+                    <Text style={styles.repoDesc} numberOfLines={2}>
+                      {d.repoFullName}
+                      {d.queued ? ' • Waiting to send' : d.sendError ? ` • Not sent: ${d.sendError}` : ''}
+                    </Text>
                   </Pressable>
                 ))}
                 {recentRepos.length > 0 ? <Text style={styles.sectionTitle}>Recent</Text> : null}
