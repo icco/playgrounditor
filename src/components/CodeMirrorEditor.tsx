@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useTheme } from '../theme/ThemeContext';
@@ -12,6 +12,10 @@ interface Props {
 export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
   const { theme } = useTheme();
   const webViewRef = useRef<WebView>(null);
+  const [initialValue] = useState(value);
+
+  const escapedJsonValue = JSON.stringify(initialValue).replace(/<\/script/g, '<\\/script');
+  const escapedPath = JSON.stringify(path).replace(/<\/script/g, '<\\/script');
 
   const htmlContent = `<!DOCTYPE html>
 <html>
@@ -69,12 +73,12 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
     .cm-activeLine {
       background-color: ${theme.colors.inputBg} !important;
     }
-    .tok-keyword { color: ${theme.colors.syntaxKeyword}; }
-    .tok-string { color: ${theme.colors.syntaxString}; }
-    .tok-number { color: ${theme.colors.syntaxNumber}; }
-    .tok-comment { color: ${theme.colors.syntaxComment}; font-style: italic; }
-    .tok-variableName { color: ${theme.colors.syntaxVariable}; }
-    .tok-function { color: ${theme.colors.syntaxFunction}; }
+    .cm-keyword, .tok-keyword { color: ${theme.colors.syntaxKeyword}; }
+    .cm-string, .tok-string { color: ${theme.colors.syntaxString}; }
+    .cm-number, .tok-number { color: ${theme.colors.syntaxNumber}; }
+    .cm-comment, .tok-comment { color: ${theme.colors.syntaxComment}; font-style: italic; }
+    .cm-variableName, .tok-variableName { color: ${theme.colors.syntaxVariable}; }
+    .cm-function, .tok-function { color: ${theme.colors.syntaxFunction}; }
   </style>
 </head>
 <body>
@@ -92,8 +96,8 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
     import { rust } from "@codemirror/lang-rust";
     import { yaml } from "@codemirror/lang-yaml";
 
-    const path = ${JSON.stringify(path)};
-    let extension = javascript();
+    const path = ${escapedPath};
+    let extension = javascript({ jsx: true, typescript: true });
     const lower = path.toLowerCase();
     if (lower.endsWith('.py')) extension = python();
     else if (lower.endsWith('.html')) extension = html();
@@ -102,7 +106,7 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
     else if (lower.endsWith('.go')) extension = go();
     else if (lower.endsWith('.rs')) extension = rust();
     else if (lower.endsWith('.yml') || lower.endsWith('.yaml')) extension = yaml();
-    else if (lower.endsWith('.md') || lower.endsWith('.markdown')) extension = markdown();
+    else if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) extension = markdown();
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -112,7 +116,7 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
     });
 
     const state = EditorState.create({
-      doc: ${JSON.stringify(value)},
+      doc: ${escapedJsonValue},
       extensions: [basicSetup, extension, updateListener, EditorView.lineWrapping]
     });
 
@@ -120,6 +124,7 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
       state,
       parent: document.getElementById('editor')
     });
+    window.editorView = view;
   </script>
 </body>
 </html>`;
