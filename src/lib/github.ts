@@ -128,7 +128,7 @@ export class GitHub {
       method: 'POST',
       body: JSON.stringify({ query, variables: { owner, name, ref, ...variables } }),
     });
-    // GraphQL reports failures in a 200 body; 403 lets isTransient retry rate limits by message.
+    // GraphQL reports failures in a 200 body, and 403 keeps query retries the same as a REST rate limit.
     if (errors?.length) throw new GitHubError(errors[0].message, 403);
     return data?.repository?.object;
   }
