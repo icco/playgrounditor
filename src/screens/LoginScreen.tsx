@@ -12,9 +12,11 @@ import {
 } from 'react-native';
 import { startDeviceFlow, pollDeviceFlow, DeviceCode, GitHubError, SLOW_DOWN_PENALTY_MS } from '../lib/github';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../theme/ThemeContext';
 
 export function LoginScreen() {
   const { loginWithToken } = useAuth();
+  const { theme } = useTheme();
   const [deviceCode, setDeviceCode] = useState<DeviceCode | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,140 @@ export function LoginScreen() {
     }
   }
 
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+      justifyContent: 'center',
+      padding: 24,
+    },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      padding: 28,
+      shadowColor: theme.colors.cardShadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 3,
+      borderWidth: 1,
+      borderColor: theme.colors.borderSubtle,
+    },
+    title: {
+      fontSize: 28,
+      fontWeight: '700',
+      color: theme.colors.text,
+      marginBottom: 6,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontSize: 15,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+      marginBottom: 28,
+    },
+    section: {
+      width: '100%',
+    },
+    primaryButton: {
+      backgroundColor: theme.colors.primary,
+      borderRadius: 10,
+      height: 50,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 20,
+    },
+    primaryButtonText: {
+      color: theme.colors.onPrimary,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    orText: {
+      textAlign: 'center',
+      color: theme.colors.placeholder,
+      fontSize: 13,
+      marginBottom: 16,
+    },
+    input: {
+      backgroundColor: theme.colors.inputBg,
+      borderRadius: 10,
+      height: 48,
+      paddingHorizontal: 16,
+      fontSize: 15,
+      color: theme.colors.text,
+      marginBottom: 12,
+    },
+    secondaryButton: {
+      borderWidth: 1,
+      borderColor: theme.colors.primary,
+      borderRadius: 10,
+      height: 46,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    secondaryButtonText: {
+      color: theme.colors.primary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    codeSection: {
+      alignItems: 'center',
+      paddingVertical: 12,
+    },
+    instruction: {
+      fontSize: 15,
+      color: theme.colors.text,
+      marginBottom: 8,
+      textAlign: 'center',
+    },
+    link: {
+      color: theme.colors.primary,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+    },
+    cancelButton: {
+      marginTop: 16,
+      padding: 10,
+    },
+    cancelText: {
+      color: theme.colors.textMuted,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    codeBox: {
+      backgroundColor: theme.colors.inputBg,
+      borderRadius: 12,
+      paddingVertical: 16,
+      paddingHorizontal: 28,
+      marginVertical: 16,
+    },
+    codeText: {
+      fontSize: 32,
+      fontWeight: '800',
+      color: theme.colors.text,
+      letterSpacing: 4,
+    },
+    waitingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 8,
+    },
+    waitingText: {
+      marginLeft: 10,
+      color: theme.colors.textMuted,
+      fontSize: 14,
+    },
+    error: {
+      backgroundColor: theme.colors.dangerBg,
+      color: theme.colors.dangerText,
+      padding: 12,
+      borderRadius: 8,
+      marginBottom: 16,
+      textAlign: 'center',
+      fontSize: 14,
+    },
+  });
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -114,7 +250,7 @@ export function LoginScreen() {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color="#FAF8F5" />
+                <ActivityIndicator color={theme.colors.onPrimary} />
               ) : (
                 <Text style={styles.primaryButtonText}>Sign in with GitHub</Text>
               )}
@@ -124,7 +260,7 @@ export function LoginScreen() {
             <TextInput
               style={styles.input}
               placeholder="ghp_..."
-              placeholderTextColor="#8C929D"
+              placeholderTextColor={theme.colors.placeholder}
               secureTextEntry
               value={manualToken}
               onChangeText={setManualToken}
@@ -147,7 +283,7 @@ export function LoginScreen() {
               <Text style={styles.codeText} selectable>{deviceCode.user_code}</Text>
             </View>
             <View style={styles.waitingRow}>
-              <ActivityIndicator size="small" color="#3A5A40" />
+              <ActivityIndicator size="small" color={theme.colors.primary} />
               <Text style={styles.waitingText}>Waiting for authorization...</Text>
             </View>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelDeviceFlow}>
@@ -159,135 +295,3 @@ export function LoginScreen() {
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAF8F5',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#16161A',
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#686D76',
-    textAlign: 'center',
-    marginBottom: 28,
-  },
-  section: {
-    width: '100%',
-  },
-  primaryButton: {
-    backgroundColor: '#3A5A40',
-    borderRadius: 10,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  primaryButtonText: {
-    color: '#FAF8F5',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  orText: {
-    textAlign: 'center',
-    color: '#8C929D',
-    fontSize: 13,
-    marginBottom: 16,
-  },
-  input: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 10,
-    height: 48,
-    paddingHorizontal: 16,
-    fontSize: 15,
-    color: '#16161A',
-    marginBottom: 12,
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: '#3A5A40',
-    borderRadius: 10,
-    height: 46,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    color: '#3A5A40',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  codeSection: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  instruction: {
-    fontSize: 15,
-    color: '#374151',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  link: {
-    color: '#3A5A40',
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-  cancelButton: {
-    marginTop: 16,
-    padding: 10,
-  },
-  cancelText: {
-    color: '#6B7280',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  codeBox: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 28,
-    marginVertical: 16,
-  },
-  codeText: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#16161A',
-    letterSpacing: 4,
-  },
-  waitingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  waitingText: {
-    marginLeft: 10,
-    color: '#686D76',
-    fontSize: 14,
-  },
-  error: {
-    backgroundColor: '#FEE2E2',
-    color: '#991B1B',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    textAlign: 'center',
-    fontSize: 14,
-  },
-});
