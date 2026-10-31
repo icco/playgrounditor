@@ -8,9 +8,16 @@ let openFile: string | null = null;
 let flushing = false;
 let flushAgain = false;
 let outboxSession = 0;
+let stopped = false;
 
 export function stopOutbox(): void {
   outboxSession += 1;
+  stopped = true;
+  flushAgain = false;
+}
+
+export function startOutbox(): void {
+  stopped = false;
 }
 
 export function subscribeOutbox(listener: Listener): () => void {
@@ -71,6 +78,7 @@ async function send(github: GitHub, draft: Draft): Promise<string> {
 }
 
 export async function flushOutbox(github: GitHub, onSent: (draft: Draft) => void): Promise<void> {
+  if (stopped) return;
   if (flushing) {
     flushAgain = true;
     return;

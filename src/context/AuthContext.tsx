@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { Alert, AppState, ToastAndroid } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import * as Keychain from 'react-native-keychain';
-import { flushOutbox, stopOutbox, subscribeOutbox } from '../lib/outbox';
+import { flushOutbox, startOutbox, stopOutbox, subscribeOutbox } from '../lib/outbox';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GitHub, User } from '../lib/github';
 import { clearLocalFiles, listDrafts } from '../lib/localFiles';
@@ -103,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!github) return;
+    startOutbox();
     const flush = () => {
       if (!onlineManager.isOnline()) return;
       flushOutbox(github, draft => {

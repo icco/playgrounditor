@@ -75,7 +75,10 @@ export function LoginScreen() {
         if ('token' in res) {
           // A device code works once, so polling again after a failure here cannot succeed.
           stopPolling();
-          await loginWithToken(res.token).catch((e: unknown) => failDeviceFlow(errorMessage(e, 'Sign in failed')));
+          const validating = pollSession.current;
+          await loginWithToken(res.token).catch((e: unknown) => {
+            if (validating === pollSession.current) failDeviceFlow(errorMessage(e, 'Sign in failed'));
+          });
           return;
         }
         if (res.slowDown) intervalMs += SLOW_DOWN_PENALTY_MS;

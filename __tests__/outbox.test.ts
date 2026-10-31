@@ -1,7 +1,7 @@
 import { encodeBase64 } from '../src/lib/base64';
 import { GitHub } from '../src/lib/github';
 import { clearLocalFiles, getDraft, saveDraft, writeDraft } from '../src/lib/localFiles';
-import { clearOpenFile, flushOutbox, setOpenFile, stopOutbox, subscribeOutbox } from '../src/lib/outbox';
+import { clearOpenFile, flushOutbox, setOpenFile, startOutbox, stopOutbox, subscribeOutbox } from '../src/lib/outbox';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
   const store = new Map<string, string>();
@@ -31,6 +31,7 @@ const queued = {
 
 describe('outbox', () => {
   beforeEach(async () => {
+    startOutbox();
     clearOpenFile();
     await clearLocalFiles();
     await writeDraft(queued);
@@ -82,12 +83,30 @@ describe('outbox', () => {
     const unsubscribe = subscribeOutbox(listener);
     const github: GitHub = new GitHub('t', jest.fn(() => {
       stopOutbox();
+      startOutbox();
       void flushOutbox(github, jest.fn());
       return Promise.resolve(respond({ content: { sha: 'new' } }));
     }));
     await flushOutbox(github, jest.fn());
     unsubscribe();
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart after sign out, even with a request pending', async () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeOutbox(listener);
+    await writeDraft({ ...queued, path: 'b.md' });
+    const fetcher = jest.fn(() => {
+      void flushOutbox(github, jest.fn());
+      stopOutbox();
+      return Promise.resolve(respond({ content: { sha: 'new' } }));
+    });
+    const github: GitHub = new GitHub('t', fetcher);
+    await flushOutbox(github, jest.fn());
+    await flushOutbox(github, jest.fn());
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('leaves a file alone while it is open', async () => {
