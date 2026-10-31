@@ -4,6 +4,8 @@ import { GITHUB_CLIENT_ID } from '../config';
 const API = 'https://api.github.com';
 const REQUEST_TIMEOUT_MS = 30_000;
 const MODIFIED_BATCH_SIZE = 5;
+// shortcut: later entries show no date, upgrade to a single GraphQL query if big folders need them.
+const MODIFIED_LOOKUP_LIMIT = 100;
 
 export const NETWORK_ERROR_STATUS = 0;
 // The commit landed, so this must never count as transient and be sent twice.
@@ -44,7 +46,6 @@ export interface FileContent {
 }
 
 export interface CommitResult {
-  branch: string;
   sha: string;
   prUrl?: string;
 }
@@ -110,8 +111,9 @@ export class GitHub {
   // Sequential batches, because a parallel burst per file trips GitHub's secondary rate limit.
   async modifiedDates(fullName: string, paths: string[], ref: string): Promise<Record<string, string>> {
     const dates: Record<string, string> = {};
-    for (let i = 0; i < paths.length; i += MODIFIED_BATCH_SIZE) {
-      const batch = paths.slice(i, i + MODIFIED_BATCH_SIZE);
+    const lookups = paths.slice(0, MODIFIED_LOOKUP_LIMIT);
+    for (let i = 0; i < lookups.length; i += MODIFIED_BATCH_SIZE) {
+      const batch = lookups.slice(i, i + MODIFIED_BATCH_SIZE);
       const results = await Promise.all(batch.map(p => this.getModifiedDate(fullName, p, ref)));
       results.forEach((date, j) => {
         if (date) dates[batch[j]] = date;
@@ -149,12 +151,11 @@ export class GitHub {
     sha?: string;
     message: string;
     mode: 'direct' | 'pr';
-    branch?: string;
   }): Promise<CommitResult> {
     const { repo, path, text, sha, message, mode } = opts;
     let branch = repo.default_branch;
     if (mode === 'pr') {
-      branch = opts.branch || `${branchName(path)}-${randomSuffix()}`;
+      branch = `${branchName(path)}-${randomSuffix()}`;
       const base = await this.req<{ object: { sha: string } }>(
         `/repos/${repo.full_name}/git/ref/heads/${encodePath(repo.default_branch)}`,
       );
@@ -176,7 +177,7 @@ export class GitHub {
       if (mode === 'pr') await this.deleteBranch(repo.full_name, branch);
       throw e;
     }
-    const result: CommitResult = { branch, sha: put.content.sha };
+    const result: CommitResult = { sha: put.content.sha };
     if (mode === 'pr') {
       try {
         const pr = await this.req<{ html_url: string }>(`/repos/${repo.full_name}/pulls`, {
@@ -259,7 +260,7 @@ export function sortEntries(entries: Entry[], sortBy: 'name' | 'modified' = 'nam
           return dateB - dateA;
         }
       }
-      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      if ((a.type === 'dir') !== (b.type === 'dir')) return a.type === 'dir' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
 }
@@ -327,7 +328,9 @@ async function postForm<T>(url: string, body: Record<string, string>, fetcher: t
 }
 
 export function isTransient(e: unknown): boolean {
-  return e instanceof GitHubError && (e.status === NETWORK_ERROR_STATUS || e.status >= 500);
+  if (!(e instanceof GitHubError)) return false;
+  const rateLimited = e.status === 429 || (e.status === 403 && /rate limit/i.test(e.message));
+  return rateLimited || e.status === NETWORK_ERROR_STATUS || e.status >= 500;
 }
 
 export function startDeviceFlow(fetcher: typeof fetch = fetch): Promise<DeviceCode> {

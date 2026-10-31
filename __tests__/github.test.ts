@@ -1,4 +1,5 @@
-import { encodeBase64, decodeBase64 } from '../src/lib/base64';
+import { Base64 } from 'js-base64';
+import { encodeBase64 } from '../src/lib/base64';
 import { GitHub, GitHubError, branchName, sortEntries, isMarkdown, formatDate } from '../src/lib/github';
 
 function jsonResponse(body: unknown): Response {
@@ -27,7 +28,7 @@ describe('base64 UTF-8 encoding', () => {
   it('encodes and decodes normal ascii and unicode strings with emoji', () => {
     const text = 'Hello, world! 🚀 — #writing';
     const encoded = encodeBase64(text);
-    const decoded = decodeBase64(encoded);
+    const decoded = Base64.decode(encoded);
     expect(decoded).toBe(text);
   });
 });

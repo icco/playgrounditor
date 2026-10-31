@@ -1,5 +1,5 @@
-import { CommitResult, GitHub, GitHubError, Repo, isTransient } from './github';
-import { Draft, cacheFile, deleteDraft, getDraft, listDrafts, writeDraft } from './localFiles';
+import { GitHub, GitHubError, Repo, isConflict, isTransient } from './github';
+import { Draft, cacheFile, deleteDraft, fileId, getDraft, listDrafts, writeDraft } from './localFiles';
 
 type Listener = () => void;
 
@@ -13,10 +13,6 @@ export function stopOutbox(): void {
   outboxSession += 1;
 }
 
-function fileId(repoFullName: string, path: string): string {
-  return `${repoFullName}:${path}`;
-}
-
 export function subscribeOutbox(listener: Listener): () => void {
   listeners.add(listener);
   return () => {
@@ -24,11 +20,9 @@ export function subscribeOutbox(listener: Listener): () => void {
   };
 }
 
-function notify() {
+export function notifyOutbox(): void {
   listeners.forEach(listener => listener());
 }
-
-export const notifyOutbox = notify;
 
 // The editor owns the draft while it is open, so sending waits until the file is closed.
 export function setOpenFile(repoFullName: string, path: string): void {
@@ -41,25 +35,39 @@ export function clearOpenFile(): void {
 
 export async function queueCommit(draft: Omit<Draft, 'updatedAt' | 'sendError'>): Promise<void> {
   await writeDraft(draft);
-  notify();
+  notifyOutbox();
 }
 
-async function send(github: GitHub, draft: Draft): Promise<CommitResult> {
+async function commitOrFindLanded(github: GitHub, draft: Draft): Promise<string> {
   const repo = { full_name: draft.repoFullName, default_branch: draft.defaultBranch } as Repo;
-  const res = await github.commit({
-    repo,
-    path: draft.path,
-    text: draft.text,
-    sha: draft.baseSha,
-    message: draft.queued!.message,
-    mode: draft.queued!.mode,
-  });
+  const mode = draft.queued!.mode;
+  try {
+    const res = await github.commit({
+      repo,
+      path: draft.path,
+      text: draft.text,
+      sha: draft.baseSha,
+      message: draft.queued!.message,
+      mode,
+    });
+    return res.sha;
+  } catch (e: unknown) {
+    if (mode !== 'direct' || !isConflict(e, !!draft.baseSha)) throw e;
+    // An earlier attempt may have landed with its reply lost, which is not a conflict.
+    const file = await github.read(draft.repoFullName, draft.path, draft.defaultBranch);
+    if (file.text !== draft.text) throw e;
+    return file.sha;
+  }
+}
+
+async function send(github: GitHub, draft: Draft): Promise<string> {
+  const sha = await commitOrFindLanded(github, draft);
   if (draft.queued!.mode === 'direct') {
-    cacheFile(draft.repoFullName, draft.path, { sha: res.sha, text: draft.text }).catch((e: unknown) =>
+    cacheFile(draft.repoFullName, draft.path, { sha, text: draft.text }).catch((e: unknown) =>
       console.warn('Could not cache file', e),
     );
   }
-  return res;
+  return sha;
 }
 
 export async function flushOutbox(github: GitHub, onSent: (draft: Draft) => void): Promise<void> {
@@ -72,16 +80,20 @@ export async function flushOutbox(github: GitHub, onSent: (draft: Draft) => void
   try {
     do {
       flushAgain = false;
-      for (const { repoFullName, path } of await listDrafts()) {
+      // Oldest first, so commit history matches the order they were queued.
+      for (const { repoFullName, path } of (await listDrafts()).reverse()) {
         if (session !== outboxSession) return;
         // Re-read each one: earlier sends take time, and the file may have been opened or edited since.
         const draft = await getDraft(repoFullName, path);
         if (!draft?.queued || fileId(repoFullName, path) === openFile) continue;
         try {
-          await send(github, draft);
+          const sha = await send(github, draft);
           if (session !== outboxSession) return;
-          if ((await getDraft(repoFullName, path))?.text === draft.text) {
+          const current = await getDraft(repoFullName, path);
+          if (current?.text === draft.text) {
             await deleteDraft(repoFullName, path);
+          } else if (current && draft.queued.mode === 'direct') {
+            await writeDraft({ ...current, baseSha: sha });
           }
           onSent(draft);
         } catch (e: unknown) {
@@ -93,10 +105,15 @@ export async function flushOutbox(github: GitHub, onSent: (draft: Draft) => void
             await writeDraft({ ...current, queued: undefined, sendError });
           }
         }
-        notify();
+        notifyOutbox();
       }
     } while (flushAgain);
   } finally {
     flushing = false;
+    // A request that arrived during a run that stopped early would otherwise be lost.
+    if (flushAgain) {
+      flushAgain = false;
+      notifyOutbox();
+    }
   }
 }
