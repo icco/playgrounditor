@@ -35,7 +35,7 @@ describe('base64 UTF-8 encoding', () => {
 describe('github helper functions', () => {
   it('generates clean branch names', () => {
     const now = new Date('2026-10-29T12:00:00Z');
-    expect(branchName('posts/hello world.md', now)).toBe('playgrouditor/hello-world-202610291200');
+    expect(branchName('posts/hello world.md', now)).toBe('playgrounditor/hello-world-202610291200');
   });
 
   it('identifies markdown files', () => {

@@ -19,7 +19,7 @@ export function SettingsScreen() {
       </View>
 
       <View style={styles.aboutCard}>
-        <Text style={styles.aboutTitle}>Playgrouditor v{version}</Text>
+        <Text style={styles.aboutTitle}>Playgrounditor v{version}</Text>
         <Text style={styles.aboutText}>Minimal mobile markdown editor for GitHub.</Text>
       </View>
     </View>

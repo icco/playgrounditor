@@ -29,7 +29,7 @@ plugins:
       releasedLabels: false
       assets:
         - path: android/app/build/outputs/apk/release/app-release.apk
-          name: playgrouditor-${nextRelease.gitTag}.apk
+          name: playgrounditor-${nextRelease.gitTag}.apk
   - - '@semantic-release/git'
     - assets:
         - CHANGELOG.md
