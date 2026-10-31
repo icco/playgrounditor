@@ -268,6 +268,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
               onRefresh={() => {
                 void repoQuery.refetch();
                 void dirQuery.refetch();
+                if (sortBy === 'modified') void modifiedQuery.refetch();
               }}
               tintColor={theme.colors.primary}
             />

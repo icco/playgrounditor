@@ -220,7 +220,9 @@ async function timedFetch(
   }, REQUEST_TIMEOUT_MS);
   try {
     const res = await fetcher(url, { ...init, signal: controller.signal });
-    const body: unknown = await res.json().catch(() => undefined);
+    if (res.status === 204) return { res, body: undefined };
+    // A dropped connection mid-body on a success must surface as a network error.
+    const body: unknown = res.ok ? await res.json() : await res.json().catch(() => undefined);
     return { res, body };
   } catch (e: unknown) {
     throw new GitHubError(

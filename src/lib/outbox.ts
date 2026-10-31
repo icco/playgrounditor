@@ -50,7 +50,9 @@ async function send(github: GitHub, draft: Draft): Promise<CommitResult> {
     mode: draft.queued!.mode,
   });
   if (draft.queued!.mode === 'direct') {
-    await cacheFile(draft.repoFullName, draft.path, { sha: res.sha, text: draft.text });
+    cacheFile(draft.repoFullName, draft.path, { sha: res.sha, text: draft.text }).catch((e: unknown) =>
+      console.warn('Could not cache file', e),
+    );
   }
   return res;
 }

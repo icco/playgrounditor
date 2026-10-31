@@ -43,6 +43,12 @@ describe('GitHub requests', () => {
     jest.useRealTimers();
   });
 
+  it('reports a body that fails mid-read as a network error', async () => {
+    const res = { ok: true, status: 200, json: () => Promise.reject(new Error('connection lost')) } as unknown as Response;
+    const error: unknown = await new GitHub('t', jest.fn().mockResolvedValue(res)).user().catch((e: unknown) => e);
+    expect((error as GitHubError).status).toBe(NETWORK_ERROR_STATUS);
+  });
+
   it('calls onUnauthorized on a 401', async () => {
     const gh = new GitHub('t', jest.fn().mockResolvedValue(respond({ message: 'Bad credentials' }, 401)));
     gh.onUnauthorized = jest.fn();

@@ -111,6 +111,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithToken = useCallback(async (t: string) => {
     const u = await new GitHub(t).user();
+    // Data kept after a rejected token belongs to that account, and queued commits must not send as another.
+    const previous = parseStored<User>(await AsyncStorage.getItem(USER_KEY));
+    if (previous && previous.login !== u.login) {
+      queryClient.clear();
+      setRecentRepos([]);
+      await Promise.all([persister.removeClient(), clearLocalFiles(), AsyncStorage.removeItem(RECENT_KEY)]);
+    }
     await Keychain.setGenericPassword('github', t, { service: KEYCHAIN_SERVICE });
     await AsyncStorage.setItem(USER_KEY, JSON.stringify(u));
     setUser(u);

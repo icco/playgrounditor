@@ -113,8 +113,8 @@ export function EditorScreen({ route, navigation }: Props) {
         text: 'Keep draft',
         onPress: () => {
           persistDraft()
-            .catch((e: unknown) => console.error('Could not save draft', e))
-            .finally(() => navigation.dispatch(data.action));
+            .then(() => navigation.dispatch(data.action))
+            .catch((e: unknown) => Alert.alert('Could not save draft', errorMessage(e, 'Your edits are still open here.')));
         },
       },
     ]);
@@ -139,7 +139,7 @@ export function EditorScreen({ route, navigation }: Props) {
           try {
             const file = await github.read(repoFullName, path, defaultBranch);
             base = { sha: file.sha, text: file.text };
-            await cacheFile(repoFullName, path, base);
+            cacheFile(repoFullName, path, base).catch((e: unknown) => console.warn('Could not cache file', e));
           } catch (e: unknown) {
             fetchError = e;
           }
@@ -147,7 +147,8 @@ export function EditorScreen({ route, navigation }: Props) {
         }
 
         const isNetworkFailure = fetchError instanceof GitHubError && fetchError.status === NETWORK_ERROR_STATUS;
-        if (fetchError && !(isNetworkFailure && (base || draft))) {
+        // A draft must stay reachable even if its file was deleted or renamed on GitHub.
+        if (fetchError && !draft && !(isNetworkFailure && base)) {
           setLoadError(errorMessage(fetchError, 'Failed to read file'));
           return;
         }
@@ -161,6 +162,7 @@ export function EditorScreen({ route, navigation }: Props) {
         setRestoredDraft(!!draft && draft.text !== server);
         if (draft?.sendError) setNotice(`Not sent: ${draft.sendError}`);
         else if (draft?.queued) setNotice('Queued to send when you leave this file while online.');
+        else if (fetchError && !isNetworkFailure) setNotice(`Could not load from GitHub: ${errorMessage(fetchError, 'unknown error')}`);
         else if (fetchError) setNotice('Showing the copy saved on this device.');
         else if (draft?.baseSha && base && draft.baseSha !== base.sha) {
           setNotice('This file changed on GitHub since your draft was started.');
@@ -258,7 +260,9 @@ export function EditorScreen({ route, navigation }: Props) {
       });
       if (mode === 'direct') {
         setSha(res.sha);
-        await cacheFile(repoFullName, path, { sha: res.sha, text: committed });
+        cacheFile(repoFullName, path, { sha: res.sha, text: committed }).catch((e: unknown) =>
+          console.warn('Could not cache file', e),
+        );
       }
       finishSave(committed, res.prUrl);
     } catch (e: unknown) {
