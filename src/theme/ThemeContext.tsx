@@ -14,6 +14,7 @@ interface ThemeContextType {
 
 const THEME_NAME_KEY = '@playgrounditor:theme_name';
 const APPEARANCE_MODE_KEY = '@playgrounditor:appearance_mode';
+const THEME_NAMES: string[] = ['playgrounditor', 'dracula', 'solarized', 'nord', 'github'];
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
@@ -28,14 +29,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       try {
         const storedName = await AsyncStorage.getItem(THEME_NAME_KEY);
         const storedMode = await AsyncStorage.getItem(APPEARANCE_MODE_KEY);
-        if (storedName && (storedName in themesList)) {
+        if (storedName && THEME_NAMES.includes(storedName)) {
           setThemeNameState(storedName as ThemeName);
         }
         if (storedMode && ['system', 'light', 'dark'].includes(storedMode)) {
           setAppearanceModeState(storedMode as AppearanceMode);
         }
-      } catch {
-        // use defaults
+      } catch (e: unknown) {
+        console.warn('Could not load theme settings', e);
       } finally {
         setLoaded(true);
       }
@@ -43,14 +44,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     void loadSettings();
   }, []);
 
-  const themesList = { playgrounditor: true, dracula: true, solarized: true, nord: true, github: true };
-
   async function setThemeName(name: ThemeName) {
     setThemeNameState(name);
     try {
       await AsyncStorage.setItem(THEME_NAME_KEY, name);
-    } catch {
-      // ignore
+    } catch (e: unknown) {
+      console.warn('Could not save theme', e);
     }
   }
 
@@ -58,8 +57,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setAppearanceModeState(mode);
     try {
       await AsyncStorage.setItem(APPEARANCE_MODE_KEY, mode);
-    } catch {
-      // ignore
+    } catch (e: unknown) {
+      console.warn('Could not save appearance mode', e);
     }
   }
 

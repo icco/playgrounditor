@@ -1,6 +1,8 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { errorMessage } from '../lib/errors';
+import { listDrafts } from '../lib/localFiles';
 import { useTheme } from '../theme/ThemeContext';
 import { ThemeName, AppearanceMode } from '../theme/types';
 import { version } from '../../package.json';
@@ -22,6 +24,23 @@ const MODE_OPTIONS: Array<{ key: AppearanceMode; label: string }> = [
 export function SettingsScreen() {
   const { user, logout } = useAuth();
   const { theme, themeName, appearanceMode, setThemeName, setAppearanceMode } = useTheme();
+
+  async function confirmLogout() {
+    const drafts = await listDrafts();
+    const warning = drafts.length
+      ? `This deletes ${drafts.length} uncommitted draft${drafts.length === 1 ? '' : 's'} and all saved files from this device.`
+      : 'This removes saved repositories and files from this device.';
+    Alert.alert('Sign out?', warning, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: () => {
+          logout().catch((e: unknown) => Alert.alert('Sign out failed', errorMessage(e, 'Could not clear this device')));
+        },
+      },
+    ]);
+  }
 
   const styles = StyleSheet.create({
     container: {
@@ -133,7 +152,7 @@ export function SettingsScreen() {
         <Text style={styles.username}>@{user?.login || 'unknown'}</Text>
         {user?.name ? <Text style={styles.name}>{user.name}</Text> : null}
 
-        <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
+        <TouchableOpacity style={styles.logoutBtn} onPress={confirmLogout}>
           <Text style={styles.logoutText}>Sign Out</Text>
         </TouchableOpacity>
       </View>

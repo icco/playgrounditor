@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as Keychain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { GitHub, GitHubError, User } from '../lib/github';
+import { GitHub, User } from '../lib/github';
+import { clearLocalFiles } from '../lib/localFiles';
+import { persister, queryClient } from '../lib/queryClient';
 
 interface AuthContextType {
   token: string | null;
@@ -18,38 +20,49 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const KEYCHAIN_SERVICE = 'com.timeclimbers.playgrounditor.token';
 const RECENT_KEY = '@playgrounditor:recent_repos';
+const USER_KEY = '@playgrounditor:user';
+
+function parseStored<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (e: unknown) {
+    console.warn('Ignoring unreadable stored value', e);
+    return null;
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentRepos, setRecentRepos] = useState<string[]>([]);
-  const [github, setGithub] = useState<GitHub | null>(null);
+
+  const signOutLocally = useCallback(async () => {
+    await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  const github = useMemo(() => {
+    if (!token) return null;
+    const gh = new GitHub(token);
+    // Drafts stay on a rejected token so a re-login can still save them.
+    gh.onUnauthorized = () => void signOutLocally();
+    return gh;
+  }, [token, signOutLocally]);
 
   useEffect(() => {
     async function init() {
       try {
-        const stored = await AsyncStorage.getItem(RECENT_KEY);
-        if (stored) {
-          setRecentRepos(JSON.parse(stored) as string[]);
-        }
+        const [storedRecent, storedUser] = await Promise.all([
+          AsyncStorage.getItem(RECENT_KEY),
+          AsyncStorage.getItem(USER_KEY),
+        ]);
+        setRecentRepos(parseStored<string[]>(storedRecent) ?? []);
+        setUser(parseStored<User>(storedUser));
         const creds = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE });
-        if (creds) {
-          const t = creds.password;
-          const gh = new GitHub(t);
-          try {
-            setUser(await gh.user());
-          } catch (e: unknown) {
-            if (e instanceof GitHubError && e.status === 401) {
-              await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
-              return;
-            }
-            // Offline at launch must not sign the user out.
-            console.warn('Could not load GitHub user', e);
-          }
-          setToken(t);
-          setGithub(gh);
-        }
+        if (creds) setToken(creds.password);
       } catch (e: unknown) {
         console.error('Failed to restore session', e);
       } finally {
@@ -59,44 +72,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void init();
   }, []);
 
-  async function loginWithToken(t: string) {
-    const gh = new GitHub(t);
-    const u = await gh.user();
+  useEffect(() => {
+    if (!github) return;
+    github
+      .user()
+      .then(u => {
+        setUser(u);
+        return AsyncStorage.setItem(USER_KEY, JSON.stringify(u));
+      })
+      .catch((e: unknown) => console.warn('Could not refresh GitHub user', e));
+  }, [github]);
+
+  const loginWithToken = useCallback(async (t: string) => {
+    const u = await new GitHub(t).user();
     await Keychain.setGenericPassword('github', t, { service: KEYCHAIN_SERVICE });
-    setToken(t);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(u));
     setUser(u);
-    setGithub(gh);
-  }
+    setToken(t);
+  }, []);
 
-  async function logout() {
-    await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
-    setToken(null);
-    setUser(null);
-    setGithub(null);
-  }
+  const logout = useCallback(async () => {
+    await signOutLocally();
+    queryClient.clear();
+    setRecentRepos([]);
+    await Promise.all([
+      persister.removeClient(),
+      clearLocalFiles(),
+      AsyncStorage.removeItem(RECENT_KEY),
+      AsyncStorage.removeItem(USER_KEY),
+    ]);
+  }, [signOutLocally]);
 
-  async function addRecentRepo(fullName: string) {
+  const addRecentRepo = useCallback(async (fullName: string) => {
     const updated = [fullName, ...recentRepos.filter(r => r !== fullName)].slice(0, 10);
     setRecentRepos(updated);
     await AsyncStorage.setItem(RECENT_KEY, JSON.stringify(updated));
-  }
+  }, [recentRepos]);
 
-  return (
-    <AuthContext
-      value={{
-        token,
-        user,
-        loading,
-        loginWithToken,
-        logout,
-        github,
-        recentRepos,
-        addRecentRepo,
-      }}
-    >
-      {children}
-    </AuthContext>
+  const value = useMemo(
+    () => ({ token, user, loading, loginWithToken, logout, github, recentRepos, addRecentRepo }),
+    [token, user, loading, loginWithToken, logout, github, recentRepos, addRecentRepo],
   );
+
+  return <AuthContext value={value}>{children}</AuthContext>;
 }
 
 export function useAuth() {

@@ -1,342 +1,452 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   KeyboardAvoidingView,
-  ScrollView,
+  Linking,
+  Modal,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
-import Markdown from 'react-native-markdown-display';
-import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../theme/ThemeContext';
-import { GitHubError, isMarkdown } from '../lib/github';
-import { CodeMirrorEditor } from '../components/CodeMirrorEditor';
 import { usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../theme/ThemeContext';
+import { GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isMarkdown } from '../lib/github';
+import { cacheFile, deleteDraft, getCachedFile, getDraft, saveDraft } from '../lib/localFiles';
+import { errorMessage } from '../lib/errors';
+import { queryClient, useIsOnline } from '../lib/queryClient';
+import { CodeMirrorEditor } from '../components/CodeMirrorEditor';
 import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Editor'>;
+type SaveMode = 'direct' | 'pr';
+
+const DRAFT_DEBOUNCE_MS = 800;
 
 export function EditorScreen({ route, navigation }: Props) {
   const { repoFullName, path, sha: initialSha, defaultBranch, isNew } = route.params;
   const { github } = useAuth();
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const online = useIsOnline();
   const [text, setText] = useState('');
+  const [savedText, setSavedText] = useState('');
   const [sha, setSha] = useState(initialSha);
-  const [loading, setLoading] = useState(!isNew);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [restoredDraft, setRestoredDraft] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
-  const [modeModal, setModeModal] = useState(false);
+  const [saveDialog, setSaveDialog] = useState(false);
   const [commitMsg, setCommitMsg] = useState(`docs: update ${path}`);
-  const [savedText, setSavedText] = useState('');
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [editorRevision, setEditorRevision] = useState(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const markdown = isMarkdown(path);
-  const dirty = !loading && !loadFailed && text !== savedText;
+  const dirty = !loading && !loadError && text !== savedText;
+
+  const latest = useRef({ text, savedText, sha, dirty });
+  latest.current = { text, savedText, sha, dirty };
+  const leavingWithoutDraft = useRef(false);
+
+  const persistDraft = useCallback(async () => {
+    const current = latest.current;
+    if (leavingWithoutDraft.current) return;
+    if (current.text === current.savedText) {
+      await deleteDraft(repoFullName, path);
+    } else {
+      await saveDraft({ repoFullName, path, defaultBranch, text: current.text, baseSha: current.sha });
+    }
+  }, [repoFullName, path, defaultBranch]);
+
+  const persistDraftLogged = useCallback(() => {
+    persistDraft().catch((e: unknown) => console.error('Could not save draft', e));
+  }, [persistDraft]);
+
+  useEffect(() => {
+    if (loading || loadError) return;
+    const timer = setTimeout(persistDraftLogged, DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [text, savedText, loading, loadError, persistDraftLogged]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state !== 'active' && latest.current.dirty) persistDraftLogged();
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [persistDraftLogged]);
+
+  useEffect(() => {
+    return () => {
+      if (latest.current.dirty) persistDraftLogged();
+    };
+  }, [persistDraftLogged]);
 
   usePreventRemove(dirty, ({ data }) => {
-    Alert.alert('Discard changes?', 'Your edits have not been saved.', [
+    Alert.alert('Leave this file?', 'Your edits have not been committed.', [
       { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(data.action) },
+      {
+        text: 'Discard',
+        style: 'destructive',
+        onPress: () => {
+          leavingWithoutDraft.current = true;
+          deleteDraft(repoFullName, path)
+            .catch((e: unknown) => console.error('Could not delete draft', e))
+            .finally(() => navigation.dispatch(data.action));
+        },
+      },
+      {
+        text: 'Keep draft',
+        onPress: () => {
+          persistDraft()
+            .catch((e: unknown) => console.error('Could not save draft', e))
+            .finally(() => navigation.dispatch(data.action));
+        },
+      },
     ]);
   });
 
   useEffect(() => {
+    let active = true;
     async function load() {
-      if (isNew || !github) return;
+      setLoading(true);
+      setLoadError(null);
+      setNotice(null);
       try {
-        const file = await github.read(repoFullName, path, defaultBranch);
-        setText(file.text);
-        setSavedText(file.text);
-        setSha(file.sha);
+        const [draft, cached] = await Promise.all([
+          getDraft(repoFullName, path),
+          isNew ? null : getCachedFile(repoFullName, path),
+        ]);
+        if (!active) return;
+
+        let base = cached;
+        let fetchError: unknown = null;
+        if (!isNew && github) {
+          try {
+            const file = await github.read(repoFullName, path, defaultBranch);
+            base = { sha: file.sha, text: file.text };
+            await cacheFile(repoFullName, path, base);
+          } catch (e: unknown) {
+            fetchError = e;
+          }
+          if (!active) return;
+        }
+
+        const isNetworkFailure = fetchError instanceof GitHubError && fetchError.status === NETWORK_ERROR_STATUS;
+        if (fetchError && !(isNetworkFailure && (base || draft))) {
+          setLoadError(errorMessage(fetchError, 'Failed to read file'));
+          return;
+        }
+
+        const server = base?.text ?? '';
+        const start = draft?.text ?? server;
+        setSavedText(server);
+        setText(start);
+        // A draft keeps its original base so a commit fails with a conflict if the file moved on.
+        setSha(draft && draft.text !== server ? draft.baseSha : base?.sha);
+        setRestoredDraft(!!draft && draft.text !== server);
+        if (fetchError) setNotice('Showing the copy saved on this device.');
+        else if (draft?.baseSha && base && draft.baseSha !== base.sha) {
+          setNotice('This file changed on GitHub since your draft was started.');
+        }
+        setEditorRevision(r => r + 1);
       } catch (e: unknown) {
-        const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to read file';
-        setLoadFailed(true);
-        Alert.alert('Error', msg, [{ text: 'OK', onPress: () => navigation.goBack() }]);
+        if (active) setLoadError(errorMessage(e, 'Failed to read file'));
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
     void load();
-  }, [repoFullName, path, defaultBranch, github, isNew, navigation]);
+    return () => {
+      active = false;
+    };
+  }, [repoFullName, path, defaultBranch, github, isNew, loadAttempt]);
 
-  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const charCount = text.length;
+  async function discardDraft() {
+    await deleteDraft(repoFullName, path);
+    setText(savedText);
+    setRestoredDraft(false);
+    setNotice(null);
+    setLoadAttempt(a => a + 1);
+  }
 
-  async function handleSave(mode: 'direct' | 'pr') {
+  const wordCount = useMemo(() => {
+    const trimmed = text.trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+  }, [text]);
+
+  function finishSave(committed: string, prUrl?: string) {
+    const buttons = prUrl
+      ? [
+          { text: 'View pull request', onPress: () => void Linking.openURL(prUrl) },
+          { text: 'Done', onPress: () => navigation.goBack() },
+        ]
+      : [{ text: 'OK', onPress: () => navigation.goBack() }];
+    Alert.alert(
+      prUrl ? 'Pull request opened' : 'Committed',
+      prUrl ?? `Changes committed directly to ${defaultBranch}.`,
+      buttons,
+    );
+    deleteDraft(repoFullName, path).catch((e: unknown) => console.error('Could not delete draft', e));
+    void queryClient.invalidateQueries({ queryKey: ['dir', repoFullName] });
+    void queryClient.invalidateQueries({ queryKey: ['modified', repoFullName] });
+    setSavedText(committed);
+    setRestoredDraft(false);
+    setNotice(null);
+  }
+
+  async function handleSave(mode: SaveMode, shaOverride?: string) {
     if (!github) return;
+    const committed = latest.current.text;
+    const baseSha = shaOverride ?? sha;
     setSaving(true);
-    setModeModal(false);
+    setSaveDialog(false);
     try {
-      const repo = await github.repo(repoFullName);
+      const repo = {
+        full_name: repoFullName,
+        default_branch: defaultBranch,
+      } as Repo;
       const res = await github.commit({
         repo,
         path,
-        text,
-        sha,
+        text: committed,
+        sha: baseSha,
         message: commitMsg.trim() || `docs: update ${path}`,
         mode,
       });
-      setSha(res.sha);
-      setSavedText(text);
-      if (res.prUrl) {
-        Alert.alert('Success', `Pull request opened:\n${res.prUrl}`, [
-          { text: 'OK', onPress: () => navigation.goBack() },
+      if (mode === 'direct') {
+        setSha(res.sha);
+        await cacheFile(repoFullName, path, { sha: res.sha, text: committed });
+      }
+      finishSave(committed, res.prUrl);
+    } catch (e: unknown) {
+      persistDraftLogged();
+      if (isConflict(e, !!baseSha)) {
+        Alert.alert('File changed on GitHub', 'Someone else updated this file. Overwrite their version with yours?', [
+          { text: 'Keep editing', style: 'cancel' },
+          {
+            text: 'Overwrite',
+            style: 'destructive',
+            onPress: () => {
+              github
+                .read(repoFullName, path, defaultBranch)
+                .then(file => handleSave(mode, file.sha))
+                .catch((err: unknown) => Alert.alert('Commit failed', errorMessage(err, 'Could not read the latest version')));
+            },
+          },
         ]);
       } else {
-        Alert.alert('Success', `Changes committed directly to ${defaultBranch}.`, [
-          { text: 'OK', onPress: () => navigation.goBack() },
-        ]);
+        Alert.alert('Commit failed', `${errorMessage(e, 'Commit failed')}\n\nYour edits are saved on this device.`);
       }
-    } catch (e: unknown) {
-      const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Commit failed';
-      Alert.alert('Commit Failed', msg);
     } finally {
       setSaving(false);
     }
   }
 
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      backgroundColor: theme.colors.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
-    },
-    fileName: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: theme.colors.text,
-      flex: 1,
-      marginRight: 12,
-    },
-    topRight: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    toggleBtn: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      marginRight: 8,
-    },
-    toggleBtnActive: {
-      backgroundColor: theme.colors.primary,
-      borderColor: theme.colors.primary,
-    },
-    toggleText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: theme.colors.textMuted,
-    },
-    toggleTextActive: {
-      color: theme.colors.onPrimary,
-    },
-    saveBtn: {
-      backgroundColor: theme.colors.primary,
-      paddingHorizontal: 16,
-      paddingVertical: 7,
-      borderRadius: 6,
-      minWidth: 64,
-      alignItems: 'center',
-    },
-    saveBtnText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: theme.colors.onPrimary,
-    },
-    previewContainer: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    previewContent: {
-      padding: 16,
-    },
-    saveBtnDisabled: {
-      opacity: 0.5,
-    },
-    statusBar: {
-      paddingVertical: 8,
-      paddingHorizontal: 16,
-      backgroundColor: theme.colors.surface,
-      borderTopWidth: 1,
-      borderTopColor: theme.colors.border,
-      alignItems: 'flex-end',
-    },
-    statusText: {
-      fontSize: 12,
-      color: theme.colors.textMuted,
-    },
-    center: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: theme.colors.background,
-    },
-    modalOverlay: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: theme.colors.overlay,
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: 24,
-    },
-    modalCard: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      padding: 24,
-      width: '100%',
-      maxWidth: 360,
-      shadowColor: theme.colors.cardShadow,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.15,
-      shadowRadius: 12,
-      elevation: 6,
-      borderWidth: 1,
-      borderColor: theme.colors.borderSubtle,
-    },
-    modalTitle: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: theme.colors.text,
-      marginBottom: 16,
-    },
-    modalLabel: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: theme.colors.textMuted,
-      marginBottom: 6,
-    },
-    modalInput: {
-      backgroundColor: theme.colors.inputBg,
-      borderRadius: 10,
-      height: 44,
-      paddingHorizontal: 14,
-      fontSize: 14,
-      color: theme.colors.text,
-      marginBottom: 16,
-    },
-    modalOption: {
-      backgroundColor: theme.colors.primaryBg,
-      borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
-      borderWidth: 1,
-      borderColor: theme.colors.primaryBorder,
-    },
-    modalOptionDirect: {
-      backgroundColor: theme.colors.inputBg,
-      borderColor: theme.colors.border,
-    },
-    modalOptionTitle: {
-      fontSize: 15,
-      fontWeight: '600',
-      color: theme.colors.primary,
-      marginBottom: 2,
-    },
-    modalOptionDesc: {
-      fontSize: 13,
-      color: theme.colors.textMuted,
-    },
-    modalCancel: {
-      marginTop: 8,
-      alignItems: 'center',
-      padding: 10,
-    },
-    modalCancelText: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: theme.colors.textMuted,
-    },
-  });
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: theme.colors.background },
+        topBar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          backgroundColor: theme.colors.surface,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        },
+        fileName: { fontSize: 14, fontWeight: '600', color: theme.colors.text, flex: 1, marginRight: 12 },
+        topRight: { flexDirection: 'row', alignItems: 'center' },
+        toggleBtn: {
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          marginRight: 8,
+        },
+        toggleBtnActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+        toggleText: { fontSize: 13, fontWeight: '600', color: theme.colors.textMuted },
+        toggleTextActive: { color: theme.colors.onPrimary },
+        saveBtn: {
+          backgroundColor: theme.colors.primary,
+          paddingHorizontal: 16,
+          paddingVertical: 7,
+          borderRadius: 6,
+          minWidth: 64,
+          alignItems: 'center',
+        },
+        saveBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.onPrimary },
+        saveBtnDisabled: { opacity: 0.5 },
+        banner: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingVertical: 8,
+          backgroundColor: theme.colors.primaryBg,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.primaryBorder,
+        },
+        bannerText: { flex: 1, fontSize: 13, color: theme.colors.text },
+        bannerAction: { fontSize: 13, fontWeight: '600', color: theme.colors.primary, marginLeft: 12 },
+        statusBar: {
+          paddingTop: 8,
+          paddingBottom: 8 + insets.bottom,
+          paddingHorizontal: 16,
+          backgroundColor: theme.colors.surface,
+          borderTopWidth: 1,
+          borderTopColor: theme.colors.border,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        statusText: { fontSize: 12, color: theme.colors.textMuted },
+        center: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+          backgroundColor: theme.colors.background,
+        },
+        errorText: { fontSize: 15, color: theme.colors.text, textAlign: 'center', marginBottom: 16 },
+        retry: { fontSize: 15, fontWeight: '600', color: theme.colors.primary },
+        modalOverlay: {
+          flex: 1,
+          backgroundColor: theme.colors.overlay,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        },
+        modalCard: {
+          backgroundColor: theme.colors.surface,
+          borderRadius: 16,
+          padding: 24,
+          width: '100%',
+          maxWidth: 360,
+          elevation: 6,
+          borderWidth: 1,
+          borderColor: theme.colors.borderSubtle,
+        },
+        modalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 16 },
+        modalLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textMuted, marginBottom: 6 },
+        modalInput: {
+          backgroundColor: theme.colors.inputBg,
+          borderRadius: 10,
+          height: 44,
+          paddingHorizontal: 14,
+          fontSize: 14,
+          color: theme.colors.text,
+          marginBottom: 16,
+        },
+        modalOption: {
+          backgroundColor: theme.colors.primaryBg,
+          borderRadius: 10,
+          padding: 14,
+          marginBottom: 10,
+          borderWidth: 1,
+          borderColor: theme.colors.primaryBorder,
+        },
+        modalOptionDirect: { backgroundColor: theme.colors.inputBg, borderColor: theme.colors.border },
+        modalOptionTitle: { fontSize: 15, fontWeight: '600', color: theme.colors.primary, marginBottom: 2 },
+        modalOptionDesc: { fontSize: 13, color: theme.colors.textMuted },
+        modalCancel: { marginTop: 8, alignItems: 'center', padding: 10 },
+        modalCancelText: { fontSize: 14, fontWeight: '600', color: theme.colors.textMuted },
+      }),
+    [theme, insets.bottom],
+  );
 
-  const markdownStyles = {
-    body: { color: theme.colors.text },
-    heading1: { color: theme.colors.text },
-    heading2: { color: theme.colors.text },
-    heading3: { color: theme.colors.text },
-    paragraph: { color: theme.colors.text },
-    link: { color: theme.colors.primary },
-    blockquote: { borderLeftColor: theme.colors.primary, backgroundColor: theme.colors.surface, color: theme.colors.text },
-    fence: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
-    code_inline: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
-    code_block: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
-  };
+  const saveDisabled = saving || loading || !!loadError || !online;
 
   return (
-    <KeyboardAvoidingView
-      behavior="padding"
-      style={styles.container}
-    >
+    <KeyboardAvoidingView behavior="padding" style={styles.container}>
       <View style={styles.topBar}>
         <Text style={styles.fileName} numberOfLines={1}>
           {path}
         </Text>
         <View style={styles.topRight}>
           {markdown ? (
-            <TouchableOpacity
+            <Pressable
+              accessibilityRole="button"
               style={[styles.toggleBtn, preview && styles.toggleBtnActive]}
-              onPress={() => setPreview(!preview)}
+              onPress={() => setPreview(p => !p)}
             >
               <Text style={[styles.toggleText, preview && styles.toggleTextActive]}>
                 {preview ? 'Edit' : 'Preview'}
               </Text>
-            </TouchableOpacity>
+            </Pressable>
           ) : null}
-          <TouchableOpacity
-            style={[styles.saveBtn, (loading || loadFailed) && styles.saveBtnDisabled]}
-            onPress={() => setModeModal(true)}
-            disabled={saving || loading || loadFailed}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: saveDisabled }}
+            style={[styles.saveBtn, saveDisabled && styles.saveBtnDisabled]}
+            onPress={() => setSaveDialog(true)}
+            disabled={saveDisabled}
           >
             {saving ? (
               <ActivityIndicator size="small" color={theme.colors.onPrimary} />
             ) : (
               <Text style={styles.saveBtnText}>Save</Text>
             )}
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
+
+      {restoredDraft ? (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>Restored your unsaved draft.</Text>
+          <Pressable accessibilityRole="button" onPress={() => void discardDraft()}>
+            <Text style={styles.bannerAction}>Discard</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {notice ? (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>{notice}</Text>
+        </View>
+      ) : null}
 
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      ) : preview ? (
-        <ScrollView style={styles.previewContainer} contentContainerStyle={styles.previewContent}>
-          <Markdown style={markdownStyles}>{text || '*Empty file*'}</Markdown>
-        </ScrollView>
+      ) : loadError ? (
+        <View style={styles.center}>
+          <Text style={styles.errorText}>{loadError}</Text>
+          <Pressable accessibilityRole="button" onPress={() => setLoadAttempt(a => a + 1)}>
+            <Text style={styles.retry}>Try again</Text>
+          </Pressable>
+        </View>
       ) : (
         <CodeMirrorEditor
-          value={text}
+          key={editorRevision}
+          initialValue={text}
           onChangeText={setText}
           path={path}
+          preview={preview}
         />
       )}
 
       <View style={styles.statusBar}>
         <Text style={styles.statusText}>
-          {wordCount} words • {charCount} chars
+          {online ? (dirty ? 'Draft saved on this device' : '') : 'Offline. Edits stay on this device.'}
+        </Text>
+        <Text style={styles.statusText}>
+          {wordCount} words • {text.length} chars
         </Text>
       </View>
 
-      {modeModal ? (
-        <View style={styles.modalOverlay}>
+      <Modal visible={saveDialog} transparent animationType="fade" onRequestClose={() => setSaveDialog(false)}>
+        <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Save Changes</Text>
             <Text style={styles.modalLabel}>Commit message</Text>
@@ -346,30 +456,26 @@ export function EditorScreen({ route, navigation }: Props) {
               onChangeText={setCommitMsg}
               placeholder="docs: update..."
               placeholderTextColor={theme.colors.placeholder}
+              accessibilityLabel="Commit message"
             />
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => void handleSave('pr')}
-            >
+            <Pressable accessibilityRole="button" style={styles.modalOption} onPress={() => void handleSave('pr')}>
               <Text style={styles.modalOptionTitle}>Open Pull Request</Text>
               <Text style={styles.modalOptionDesc}>Commit to a new branch & open PR</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
               style={[styles.modalOption, styles.modalOptionDirect]}
               onPress={() => void handleSave('direct')}
             >
               <Text style={styles.modalOptionTitle}>Commit to {defaultBranch}</Text>
               <Text style={styles.modalOptionDesc}>Push directly to {defaultBranch}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalCancel}
-              onPress={() => setModeModal(false)}
-            >
+            </Pressable>
+            <Pressable accessibilityRole="button" style={styles.modalCancel} onPress={() => setSaveDialog(false)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
-        </View>
-      ) : null}
+        </KeyboardAvoidingView>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

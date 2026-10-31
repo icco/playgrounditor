@@ -1,113 +1,78 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
-import { Entry, GitHubError, Repo, formatDate, isEditable, isMarkdown, sortEntries } from '../lib/github';
-import { useFocusEffect, usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { useQuery } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../theme/ThemeContext';
+import { errorMessage } from '../lib/errors';
+import { Entry, formatDate, isEditable, isMarkdown, newFilePath, sortEntries } from '../lib/github';
+import { RootStackParamList, SortBy } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FileBrowser'>;
 
+const MODIFIED_STALE_MS = 10 * 60 * 1000;
+
 export function FileBrowserScreen({ route, navigation }: Props) {
-  const { repoFullName, path: initialPath = '' } = route.params;
+  const { repoFullName, path: currentPath = '' } = route.params;
   const { github } = useAuth();
-  const [repo, setRepo] = useState<Repo | null>(null);
-  const repoRef = useRef<Repo | null>(null);
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [rawEntries, setRawEntries] = useState<Entry[]>([]);
-  const [sortBy, setSortBy] = useState<'name' | 'modified'>('name');
-  const [currentPath, setCurrentPath] = useState(initialPath);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [sortBy, setSortBy] = useState<SortBy>(route.params.sortBy ?? 'name');
   const [modalVisible, setModalVisible] = useState(false);
   const [newFileName, setNewFileName] = useState('');
 
-  const latestLoad = useRef(0);
+  const repoQuery = useQuery({
+    queryKey: ['repo', repoFullName],
+    queryFn: () => github!.repo(repoFullName),
+    enabled: !!github,
+  });
+  const defaultBranch = repoQuery.data?.default_branch;
 
-  const loadData = useCallback(async () => {
-    if (!github) return;
-    const load = ++latestLoad.current;
-    try {
-      setError(null);
-      const r = repoRef.current || (await github.repo(repoFullName));
-      repoRef.current = r;
-      setRepo(r);
-      const list = await github.list(repoFullName, currentPath, r.default_branch);
-      if (load !== latestLoad.current) return;
-      setRawEntries(list);
-    } catch (e: unknown) {
-      if (load !== latestLoad.current) return;
-      const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to load directory';
-      setRawEntries([]);
-      setEntries([]);
-      setError(msg);
-    } finally {
-      if (load === latestLoad.current) {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }, [github, repoFullName, currentPath]);
-
-  useEffect(() => {
-    let active = true;
-    async function processSorting() {
-      if (!github || rawEntries.length === 0) {
-        setEntries(sortEntries(rawEntries, sortBy));
-        return;
-      }
-
-      if (sortBy === 'modified') {
-        const needsFetch = rawEntries.some(e => e.modified === undefined);
-        if (needsFetch && repo) {
-          const updated = await Promise.all(
-            rawEntries.map(async entry => {
-              if (entry.modified !== undefined) return entry;
-              const modified = await github.getModifiedDate(repoFullName, entry.path, repo.default_branch);
-              return { ...entry, modified };
-            }),
-          );
-          if (!active) return;
-          setRawEntries(updated);
-          setEntries(sortEntries(updated, 'modified'));
-          return;
-        }
-      }
-
-      setEntries(sortEntries(rawEntries, sortBy));
-    }
-
-    void processSorting();
-    return () => {
-      active = false;
-    };
-  }, [sortBy, rawEntries, github, repoFullName, repo]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadData();
-    }, [loadData]),
-  );
-
-  usePreventRemove(currentPath !== '', () => {
-    openDir(currentPath.split('/').slice(0, -1).join('/'));
+  const dirQuery = useQuery({
+    queryKey: ['dir', repoFullName, currentPath, defaultBranch],
+    queryFn: () => github!.list(repoFullName, currentPath, defaultBranch!),
+    enabled: !!github && !!defaultBranch,
   });
 
+  const paths = useMemo(() => (dirQuery.data ?? []).map(e => e.path), [dirQuery.data]);
+  const modifiedQuery = useQuery({
+    queryKey: ['modified', repoFullName, currentPath, defaultBranch, paths],
+    queryFn: () => github!.modifiedDates(repoFullName, paths, defaultBranch!),
+    enabled: !!github && !!defaultBranch && sortBy === 'modified' && paths.length > 0,
+    staleTime: MODIFIED_STALE_MS,
+  });
+
+  const entries = useMemo(() => {
+    const dates = sortBy === 'modified' ? modifiedQuery.data : undefined;
+    const withDates = (dirQuery.data ?? []).map(e => ({ ...e, modified: dates?.[e.path] }));
+    return sortEntries(withDates, sortBy);
+  }, [dirQuery.data, modifiedQuery.data, sortBy]);
+
+  const failure = repoQuery.error ?? dirQuery.error ?? (sortBy === 'modified' ? modifiedQuery.error : null);
+  const loading = !dirQuery.data && (repoQuery.isLoading || dirQuery.isLoading);
+  const breadcrumbs = currentPath ? currentPath.split('/') : [];
+
   function openDir(path: string) {
-    setLoading(true);
-    setCurrentPath(path);
+    navigation.push('FileBrowser', { repoFullName, path, sortBy });
+  }
+
+  // Each directory level is its own stack entry, so a crumb's distance is its depth difference.
+  function popToDepth(depth: number) {
+    const count = breadcrumbs.length - depth;
+    if (count > 0) navigation.pop(count);
   }
 
   function handlePress(item: Entry) {
@@ -115,77 +80,183 @@ export function FileBrowserScreen({ route, navigation }: Props) {
       openDir(item.path);
     } else if (item.type !== 'file' || !isEditable(item.name)) {
       Alert.alert('Cannot edit', `${item.name} is not a text file this app can edit.`);
-    } else {
-      navigation.navigate('Editor', {
-        repoFullName,
-        path: item.path,
-        sha: item.sha,
-        defaultBranch: repo?.default_branch || 'main',
-      });
+    } else if (defaultBranch) {
+      navigation.navigate('Editor', { repoFullName, path: item.path, sha: item.sha, defaultBranch });
     }
   }
 
   function handleCreateNew() {
-    if (!newFileName.trim()) return;
-    const cleanName = newFileName.trim().endsWith('.md')
-      ? newFileName.trim()
-      : `${newFileName.trim()}.md`;
-    const targetPath = currentPath ? `${currentPath}/${cleanName}` : cleanName;
+    const targetPath = newFilePath(currentPath, newFileName);
+    if (!targetPath) {
+      Alert.alert('Invalid file name', 'Use a name like post-title.md, without empty, "." or ".." folders.');
+      return;
+    }
+    if (!defaultBranch) {
+      Alert.alert('Repository not loaded', 'Connect to the internet and try again.');
+      return;
+    }
+    const existing = entries.find(e => e.path === targetPath && e.type === 'file');
     setModalVisible(false);
     setNewFileName('');
     navigation.navigate('Editor', {
       repoFullName,
       path: targetPath,
-      defaultBranch: repo?.default_branch || 'main',
-      isNew: true,
+      defaultBranch,
+      ...(existing ? { sha: existing.sha } : { isNew: true }),
     });
   }
 
-  const breadcrumbs = currentPath ? currentPath.split('/') : [];
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: theme.colors.background },
+        breadcrumbRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          padding: 14,
+          backgroundColor: theme.colors.surface,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        },
+        crumbBtn: { paddingVertical: 2 },
+        crumbRoot: { fontSize: 14, fontWeight: '600', color: theme.colors.primary },
+        crumbSep: { fontSize: 14, color: theme.colors.placeholder, marginHorizontal: 6 },
+        crumbText: { fontSize: 14, color: theme.colors.text },
+        list: { padding: 16, paddingBottom: 100 + insets.bottom },
+        center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+        empty: { textAlign: 'center', color: theme.colors.textMuted, fontSize: 14, marginTop: 24 },
+        row: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: theme.colors.surface,
+          borderRadius: 10,
+          padding: 14,
+          marginBottom: 8,
+          borderWidth: 1,
+          borderColor: theme.colors.borderSubtle,
+        },
+        rowDir: { borderColor: theme.colors.primaryBorder },
+        rowIcon: { fontSize: 18, marginRight: 12 },
+        rowText: { fontSize: 16, color: theme.colors.text, flex: 1 },
+        rowMd: { fontWeight: '600', color: theme.colors.primary },
+        rowInfo: { flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+        rowDate: { fontSize: 12, color: theme.colors.textMuted, marginLeft: 8 },
+        sortRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          backgroundColor: theme.colors.surface,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        },
+        sortLabel: { fontSize: 13, color: theme.colors.textMuted, marginRight: 8, fontWeight: '500' },
+        sortBtn: {
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 6,
+          backgroundColor: theme.colors.inputBg,
+          marginRight: 6,
+        },
+        sortBtnActive: { backgroundColor: theme.colors.primary },
+        sortBtnText: { fontSize: 13, color: theme.colors.textMuted, fontWeight: '500' },
+        sortBtnTextActive: { color: theme.colors.onPrimary },
+        fab: {
+          position: 'absolute',
+          right: 24,
+          bottom: 24 + insets.bottom,
+          width: 60,
+          height: 60,
+          borderRadius: 30,
+          backgroundColor: theme.colors.primary,
+          justifyContent: 'center',
+          alignItems: 'center',
+          elevation: 6,
+        },
+        fabText: { fontSize: 28, color: theme.colors.onPrimary, fontWeight: '300', marginTop: -2 },
+        modalOverlay: {
+          flex: 1,
+          backgroundColor: theme.colors.overlay,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        },
+        modalCard: {
+          backgroundColor: theme.colors.surface,
+          borderRadius: 16,
+          padding: 24,
+          width: '100%',
+          maxWidth: 360,
+          elevation: 6,
+        },
+        modalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 16 },
+        modalInput: {
+          backgroundColor: theme.colors.inputBg,
+          borderRadius: 10,
+          height: 48,
+          paddingHorizontal: 16,
+          fontSize: 15,
+          color: theme.colors.text,
+          marginBottom: 20,
+        },
+        modalButtons: { flexDirection: 'row', justifyContent: 'flex-end' },
+        modalBtn: { paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8, marginLeft: 10 },
+        modalBtnCancel: { backgroundColor: theme.colors.inputBg },
+        modalBtnCancelText: { color: theme.colors.textMuted, fontWeight: '600' },
+        modalBtnCreate: { backgroundColor: theme.colors.primary },
+        modalBtnCreateText: { color: theme.colors.onPrimary, fontWeight: '600' },
+        error: {
+          backgroundColor: theme.colors.dangerBg,
+          color: theme.colors.dangerText,
+          padding: 12,
+          margin: 16,
+          borderRadius: 8,
+          textAlign: 'center',
+          fontSize: 14,
+        },
+      }),
+    [theme, insets.bottom],
+  );
 
   return (
     <View style={styles.container}>
       <View style={styles.breadcrumbRow}>
-        <TouchableOpacity
-          onPress={() => openDir('')}
-          style={styles.crumbBtn}
-        >
+        <Pressable accessibilityRole="button" onPress={() => popToDepth(0)} style={styles.crumbBtn}>
           <Text style={styles.crumbRoot}>{repoFullName}</Text>
-        </TouchableOpacity>
-        {breadcrumbs.map((crumb, idx) => {
-          const subPath = breadcrumbs.slice(0, idx + 1).join('/');
-          return (
-            <React.Fragment key={subPath}>
-              <Text style={styles.crumbSep}>/</Text>
-              <TouchableOpacity onPress={() => openDir(subPath)} style={styles.crumbBtn}>
-                <Text style={styles.crumbText}>{crumb}</Text>
-              </TouchableOpacity>
-            </React.Fragment>
-          );
-        })}
+        </Pressable>
+        {breadcrumbs.map((crumb, idx) => (
+          <React.Fragment key={breadcrumbs.slice(0, idx + 1).join('/')}>
+            <Text style={styles.crumbSep}>/</Text>
+            <Pressable accessibilityRole="button" onPress={() => popToDepth(idx + 1)} style={styles.crumbBtn}>
+              <Text style={styles.crumbText}>{crumb}</Text>
+            </Pressable>
+          </React.Fragment>
+        ))}
       </View>
 
       <View style={styles.sortRow}>
         <Text style={styles.sortLabel}>Sort by:</Text>
-        <TouchableOpacity
-          style={[styles.sortBtn, sortBy === 'name' && styles.sortBtnActive]}
-          onPress={() => setSortBy('name')}
-        >
-          <Text style={[styles.sortBtnText, sortBy === 'name' && styles.sortBtnTextActive]}>Name</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.sortBtn, sortBy === 'modified' && styles.sortBtnActive]}
-          onPress={() => setSortBy('modified')}
-        >
-          <Text style={[styles.sortBtnText, sortBy === 'modified' && styles.sortBtnTextActive]}>Modified</Text>
-        </TouchableOpacity>
+        {(['name', 'modified'] as const).map(option => (
+          <Pressable
+            key={option}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: sortBy === option }}
+            style={[styles.sortBtn, sortBy === option && styles.sortBtnActive]}
+            onPress={() => setSortBy(option)}
+          >
+            <Text style={[styles.sortBtnText, sortBy === option && styles.sortBtnTextActive]}>
+              {option === 'name' ? 'Name' : 'Modified'}
+            </Text>
+          </Pressable>
+        ))}
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {failure ? <Text style={styles.error}>{errorMessage(failure, 'Failed to load directory')}</Text> : null}
 
-      {loading && !refreshing ? (
+      {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#3A5A40" />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
       ) : (
         <FlatList
@@ -193,19 +264,21 @@ export function FileBrowserScreen({ route, navigation }: Props) {
           keyExtractor={item => item.path}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing}
+              refreshing={dirQuery.isRefetching}
               onRefresh={() => {
-                setRefreshing(true);
-                void loadData();
+                void repoQuery.refetch();
+                void dirQuery.refetch();
               }}
-              tintColor="#3A5A40"
+              tintColor={theme.colors.primary}
             />
           }
+          ListEmptyComponent={failure ? null : <Text style={styles.empty}>This folder is empty.</Text>}
           renderItem={({ item }) => {
             const isMd = isMarkdown(item.name);
             return (
-              <TouchableOpacity
-                style={[styles.row, item.type === 'dir' ? styles.rowDir : styles.rowFile]}
+              <Pressable
+                accessibilityRole="button"
+                style={[styles.row, item.type === 'dir' && styles.rowDir]}
                 onPress={() => handlePress(item)}
               >
                 <Text style={styles.rowIcon}>{item.type === 'dir' ? '📁' : isMd ? '📝' : '📄'}</Text>
@@ -213,252 +286,64 @@ export function FileBrowserScreen({ route, navigation }: Props) {
                   <Text style={[styles.rowText, isMd && styles.rowMd]} numberOfLines={1}>
                     {item.name}
                   </Text>
-                  {item.modified ? (
-                    <Text style={styles.rowDate}>{formatDate(item.modified)}</Text>
-                  ) : null}
+                  {item.modified ? <Text style={styles.rowDate}>{formatDate(item.modified)}</Text> : null}
                 </View>
-              </TouchableOpacity>
+              </Pressable>
             );
           }}
           contentContainerStyle={styles.list}
         />
       )}
 
-      <TouchableOpacity style={styles.fab} onPress={() => setModalVisible(true)}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="New file"
+        style={styles.fab}
+        onPress={() => setModalVisible(true)}
+      >
         <Text style={styles.fabText}>＋</Text>
-      </TouchableOpacity>
+      </Pressable>
 
-      <Modal visible={modalVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>New Markdown File</Text>
+            <Text style={styles.modalTitle}>New File</Text>
             <TextInput
               style={styles.modalInput}
               placeholder="e.g. post-title.md"
-              placeholderTextColor="#8C929D"
+              placeholderTextColor={theme.colors.placeholder}
               value={newFileName}
               onChangeText={setNewFileName}
+              onSubmitEditing={handleCreateNew}
               autoFocus
               autoCapitalize="none"
+              autoCorrect={false}
+              accessibilityLabel="File name"
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity
+              <Pressable
+                accessibilityRole="button"
                 style={[styles.modalBtn, styles.modalBtnCancel]}
                 onPress={() => setModalVisible(false)}
               >
                 <Text style={styles.modalBtnCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
                 style={[styles.modalBtn, styles.modalBtnCreate]}
                 onPress={handleCreateNew}
               >
                 <Text style={styles.modalBtnCreateText}>Create</Text>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FAF8F5',
-  },
-  breadcrumbRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    padding: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  crumbBtn: {
-    paddingVertical: 2,
-  },
-  crumbRoot: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#3A5A40',
-  },
-  crumbSep: {
-    fontSize: 14,
-    color: '#8C929D',
-    marginHorizontal: 6,
-  },
-  crumbText: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  list: {
-    padding: 16,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#EFECE6',
-  },
-  rowDir: {
-    borderColor: '#D8E2DC',
-  },
-  rowFile: {},
-  rowIcon: {
-    fontSize: 18,
-    marginRight: 12,
-  },
-  rowText: {
-    fontSize: 16,
-    color: '#16161A',
-    flex: 1,
-  },
-  rowInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  rowDate: {
-    fontSize: 12,
-    color: '#686D76',
-    marginLeft: 8,
-  },
-  sortRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  sortLabel: {
-    fontSize: 13,
-    color: '#686D76',
-    marginRight: 8,
-    fontWeight: '500',
-  },
-  sortBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#F3F4F6',
-    marginRight: 6,
-  },
-  sortBtnActive: {
-    backgroundColor: '#3A5A40',
-  },
-  sortBtnText: {
-    fontSize: 13,
-    color: '#4B5563',
-    fontWeight: '500',
-  },
-  sortBtnTextActive: {
-    color: '#FAF8F5',
-  },
-  rowMd: {
-    fontWeight: '600',
-    color: '#3A5A40',
-  },
-  fab: {
-    position: 'absolute',
-    right: 24,
-    bottom: 24,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#3A5A40',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  fabText: {
-    fontSize: 28,
-    color: '#FAF8F5',
-    fontWeight: '300',
-    marginTop: -2,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 360,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#16161A',
-    marginBottom: 16,
-  },
-  modalInput: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 10,
-    height: 48,
-    paddingHorizontal: 16,
-    fontSize: 15,
-    color: '#16161A',
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  modalBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
-    marginLeft: 10,
-  },
-  modalBtnCancel: {
-    backgroundColor: '#F3F4F6',
-  },
-  modalBtnCancelText: {
-    color: '#4B5563',
-    fontWeight: '600',
-  },
-  modalBtnCreate: {
-    backgroundColor: '#3A5A40',
-  },
-  modalBtnCreateText: {
-    color: '#FAF8F5',
-    fontWeight: '600',
-  },
-  error: {
-    backgroundColor: '#FEE2E2',
-    color: '#991B1B',
-    padding: 12,
-    margin: 16,
-    borderRadius: 8,
-    textAlign: 'center',
-    fontSize: 14,
-  },
-});
