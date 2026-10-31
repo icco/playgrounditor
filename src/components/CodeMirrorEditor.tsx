@@ -1,149 +1,95 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { WebView, WebViewMessageEvent } from 'react-native-webview';
+import { WebView, WebViewMessageEvent, WebViewProps } from 'react-native-webview';
 import { useTheme } from '../theme/ThemeContext';
+import type { Theme } from '../theme/types';
+import type { EditorColors, EditorInbound, EditorOutbound } from '../editor/protocol';
+
+// WebView's class typings resolve its props to never under TypeScript 6.
+const EditorWebView = WebView as unknown as React.ComponentType<WebViewProps & React.RefAttributes<WebView>>;
 
 interface Props {
-  value: string;
+  initialValue: string;
   onChangeText: (text: string) => void;
   path: string;
+  preview: boolean;
 }
 
-export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
+function editorColors({ colors }: Theme): EditorColors {
+  return {
+    background: colors.background,
+    surface: colors.surface,
+    text: colors.text,
+    textMuted: colors.textMuted,
+    border: colors.border,
+    primary: colors.primary,
+    inputBg: colors.inputBg,
+    'syntax-keyword': colors.syntaxKeyword,
+    'syntax-string': colors.syntaxString,
+    'syntax-number': colors.syntaxNumber,
+    'syntax-comment': colors.syntaxComment,
+    'syntax-variable': colors.syntaxVariable,
+    'syntax-function': colors.syntaxFunction,
+  };
+}
+
+// The document only crosses the bridge as a message, so file contents never become page markup.
+export function CodeMirrorEditor({ initialValue, onChangeText, path, preview }: Props) {
   const { theme } = useTheme();
-  const webViewRef = useRef<WebView>(null);
-  const [initialValue] = useState(value);
+  const webView = useRef<WebView>(null);
+  const latestText = useRef(initialValue);
+  const ready = useRef(false);
+  const [generation, setGeneration] = useState(0);
+  const colors = editorColors(theme);
+  const colorsKey = JSON.stringify(colors);
 
-  const escapedJsonValue = JSON.stringify(initialValue).replace(/<\/script/g, '<\\/script');
-  const escapedPath = JSON.stringify(path).replace(/<\/script/g, '<\\/script');
+  function post(message: EditorInbound) {
+    webView.current?.injectJavaScript(`window.editorBridge.receive(${JSON.stringify(message)});true;`);
+  }
 
-  const htmlContent = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <script type="importmap">
-    {
-      "imports": {
-        "codemirror": "https://esm.sh/codemirror@6.0.2?bundle",
-        "@codemirror/state": "https://esm.sh/@codemirror/state@6.5.0?bundle",
-        "@codemirror/view": "https://esm.sh/@codemirror/view@6.35.0?bundle",
-        "@codemirror/language": "https://esm.sh/@codemirror/language@6.10.6?bundle",
-        "@codemirror/lang-markdown": "https://esm.sh/@codemirror/lang-markdown@6.3.1?bundle",
-        "@codemirror/lang-javascript": "https://esm.sh/@codemirror/lang-javascript@6.2.2?bundle",
-        "@codemirror/lang-python": "https://esm.sh/@codemirror/lang-python@6.1.6?bundle",
-        "@codemirror/lang-html": "https://esm.sh/@codemirror/lang-html@6.4.9?bundle",
-        "@codemirror/lang-css": "https://esm.sh/@codemirror/lang-css@6.3.1?bundle",
-        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1?bundle",
-        "@codemirror/lang-go": "https://esm.sh/@codemirror/lang-go@6.0.1?bundle",
-        "@codemirror/lang-rust": "https://esm.sh/@codemirror/lang-rust@6.0.1?bundle",
-        "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.0?bundle",
-        "@lezer/highlight": "https://esm.sh/@lezer/highlight@1.2.1?bundle"
-      }
-    }
-  </script>
-  <style>
-    html, body, #editor {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      background-color: ${theme.colors.background};
-      color: ${theme.colors.text};
-    }
-    .cm-editor {
-      height: 100%;
-      font-family: monospace;
-      font-size: 15px;
-      background-color: ${theme.colors.background} !important;
-      color: ${theme.colors.text} !important;
-    }
-    .cm-scroller {
-      overflow: auto;
-      padding: 16px;
-    }
-    .cm-content {
-      caret-color: ${theme.colors.primary};
-    }
-    .cm-gutters {
-      background-color: ${theme.colors.surface} !important;
-      color: ${theme.colors.textMuted} !important;
-      border-right: 1px solid ${theme.colors.border} !important;
-    }
-    .cm-activeLine {
-      background-color: ${theme.colors.inputBg} !important;
-    }
-    .cm-keyword, .tok-keyword { color: ${theme.colors.syntaxKeyword}; }
-    .cm-string, .tok-string { color: ${theme.colors.syntaxString}; }
-    .cm-number, .tok-number { color: ${theme.colors.syntaxNumber}; }
-    .cm-comment, .tok-comment { color: ${theme.colors.syntaxComment}; font-style: italic; }
-    .cm-variableName, .tok-variableName { color: ${theme.colors.syntaxVariable}; }
-    .cm-function, .tok-function { color: ${theme.colors.syntaxFunction}; }
-  </style>
-</head>
-<body>
-  <div id="editor"></div>
-  <script type="module">
-    import { EditorView, basicSetup } from "codemirror";
-    import { EditorState } from "@codemirror/state";
-    import { markdown } from "@codemirror/lang-markdown";
-    import { javascript } from "@codemirror/lang-javascript";
-    import { python } from "@codemirror/lang-python";
-    import { html } from "@codemirror/lang-html";
-    import { css } from "@codemirror/lang-css";
-    import { json } from "@codemirror/lang-json";
-    import { go } from "@codemirror/lang-go";
-    import { rust } from "@codemirror/lang-rust";
-    import { yaml } from "@codemirror/lang-yaml";
+  useEffect(() => {
+    if (ready.current) post({ type: 'colors', colors: JSON.parse(colorsKey) as EditorColors });
+  }, [colorsKey]);
 
-    const path = ${escapedPath};
-    let extension = javascript({ jsx: true, typescript: true });
-    const lower = path.toLowerCase();
-    if (lower.endsWith('.py')) extension = python();
-    else if (lower.endsWith('.html')) extension = html();
-    else if (lower.endsWith('.css')) extension = css();
-    else if (lower.endsWith('.json')) extension = json();
-    else if (lower.endsWith('.go')) extension = go();
-    else if (lower.endsWith('.rs')) extension = rust();
-    else if (lower.endsWith('.yml') || lower.endsWith('.yaml')) extension = yaml();
-    else if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')) extension = markdown();
+  useEffect(() => {
+    if (ready.current) post({ type: 'preview', on: preview });
+  }, [preview]);
 
-    const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
-        const text = update.state.doc.toString();
-        window.ReactNativeWebView.postMessage(text);
-      }
-    });
+  function onMessage(event: WebViewMessageEvent) {
+    const message = JSON.parse(event.nativeEvent.data) as EditorOutbound;
+    switch (message.type) {
+      case 'ready':
+        ready.current = true;
+        post({ type: 'init', doc: latestText.current, path, preview, colors });
+        break;
+      case 'change':
+        latestText.current = message.doc;
+        onChangeText(message.doc);
+        break;
+      case 'error':
+        console.error('Editor error', message.message);
+        break;
+    }
+  }
 
-    const state = EditorState.create({
-      doc: ${escapedJsonValue},
-      extensions: [basicSetup, extension, updateListener, EditorView.lineWrapping]
-    });
-
-    const view = new EditorView({
-      state,
-      parent: document.getElementById('editor')
-    });
-    window.editorView = view;
-  </script>
-</body>
-</html>`;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const WebViewComponent = WebView as unknown as React.ComponentType<any>;
+  function restart() {
+    ready.current = false;
+    setGeneration(g => g + 1);
+  }
 
   return (
     <View style={styles.container}>
-      <WebViewComponent
-        ref={webViewRef}
-        originWhitelist={['*']}
-        source={{ html: htmlContent }}
+      <EditorWebView
+        key={generation}
+        ref={webView}
+        source={{ uri: 'file:///android_asset/editor/index.html' }}
+        originWhitelist={['file://*']}
         style={{ backgroundColor: theme.colors.background }}
-        onMessage={(event: WebViewMessageEvent) => {
-          onChangeText(event.nativeEvent.data);
-        }}
-        javaScriptEnabled
-        domStorageEnabled
+        onMessage={onMessage}
+        onRenderProcessGone={restart}
+        setSupportMultipleWindows
+        overScrollMode="never"
+        textZoom={100}
       />
     </View>
   );

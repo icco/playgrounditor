@@ -1,14 +1,21 @@
-import { decodeBase64, encodeBase64 } from './base64';
+import { decodeUtf8Strict, encodeBase64 } from './base64';
 import { GITHUB_CLIENT_ID } from '../config';
 
 const API = 'https://api.github.com';
+const REQUEST_TIMEOUT_MS = 30_000;
+const MODIFIED_BATCH_SIZE = 5;
+
+export const NETWORK_ERROR_STATUS = 0;
+// The commit landed, so this must never count as transient and be sent twice.
+const PARTIAL_COMMIT_STATUS = 424;
 
 export class GitHubError extends Error {
   constructor(
     message: string,
     public status: number,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -53,8 +60,10 @@ export class GitHub {
     private fetcher: typeof fetch = fetch,
   ) {}
 
+  onUnauthorized?: () => void;
+
   private async req<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await this.fetcher(`${API}${path}`, {
+    const { res, body } = await timedFetch(this.fetcher, `${API}${path}`, {
       ...init,
       headers: {
         Accept: 'application/vnd.github+json',
@@ -65,16 +74,11 @@ export class GitHub {
       },
     });
     if (!res.ok) {
-      let msg = res.statusText;
-      try {
-        const body = (await res.json()) as { message?: string };
-        if (body.message) msg = body.message;
-      } catch {
-        // ignore non-JSON error bodies
-      }
-      throw new GitHubError(msg, res.status);
+      if (res.status === 401) this.onUnauthorized?.();
+      const message = (body as { message?: string } | undefined)?.message;
+      throw new GitHubError(message || res.statusText, res.status);
     }
-    return (await res.json()) as T;
+    return body as T;
   }
 
   user(): Promise<User> {
@@ -97,14 +101,23 @@ export class GitHub {
   }
 
   async getModifiedDate(fullName: string, path: string, ref: string): Promise<string | undefined> {
-    try {
-      const commits = await this.req<Array<{ commit: { committer: { date: string } } }>>(
-        `/repos/${fullName}/commits?path=${encodePath(path)}&ref=${encodeURIComponent(ref)}&per_page=1`,
-      );
-      return commits[0]?.commit?.committer?.date;
-    } catch {
-      return undefined;
+    const commits = await this.req<Array<{ commit: { committer: { date: string } } }>>(
+      `/repos/${fullName}/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(ref)}&per_page=1`,
+    );
+    return commits[0]?.commit?.committer?.date;
+  }
+
+  // Sequential batches, because a parallel burst per file trips GitHub's secondary rate limit.
+  async modifiedDates(fullName: string, paths: string[], ref: string): Promise<Record<string, string>> {
+    const dates: Record<string, string> = {};
+    for (let i = 0; i < paths.length; i += MODIFIED_BATCH_SIZE) {
+      const batch = paths.slice(i, i + MODIFIED_BATCH_SIZE);
+      const results = await Promise.all(batch.map(p => this.getModifiedDate(fullName, p, ref)));
+      results.forEach((date, j) => {
+        if (date) dates[batch[j]] = date;
+      });
     }
+    return dates;
   }
 
   async list(fullName: string, path: string, ref: string): Promise<Entry[]> {
@@ -122,7 +135,11 @@ export class GitHub {
     if (file.encoding !== 'base64') {
       throw new GitHubError('This file is too large to edit here.', 413);
     }
-    return { path: file.path, sha: file.sha, text: decodeBase64(file.content) };
+    const text = decodeUtf8Strict(file.content);
+    if (text === null) {
+      throw new GitHubError('This file is not UTF-8 text, so it cannot be edited here.', 415);
+    }
+    return { path: file.path, sha: file.sha, text };
   }
 
   async commit(opts: {
@@ -137,32 +154,94 @@ export class GitHub {
     const { repo, path, text, sha, message, mode } = opts;
     let branch = repo.default_branch;
     if (mode === 'pr') {
-      branch = opts.branch || branchName(path);
+      branch = opts.branch || `${branchName(path)}-${randomSuffix()}`;
       const base = await this.req<{ object: { sha: string } }>(
-        `/repos/${repo.full_name}/git/ref/heads/${encodeURIComponent(repo.default_branch)}`,
+        `/repos/${repo.full_name}/git/ref/heads/${encodePath(repo.default_branch)}`,
       );
       await this.req(`/repos/${repo.full_name}/git/refs`, {
         method: 'POST',
         body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: base.object.sha }),
       });
     }
-    const put = await this.req<{ content: { sha: string } }>(
-      `/repos/${repo.full_name}/contents/${encodePath(path)}`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ message, content: encodeBase64(text), sha, branch }),
-      },
-    );
+    let put: { content: { sha: string } };
+    try {
+      put = await this.req<{ content: { sha: string } }>(
+        `/repos/${repo.full_name}/contents/${encodePath(path)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ message, content: encodeBase64(text), sha, branch }),
+        },
+      );
+    } catch (e: unknown) {
+      if (mode === 'pr') await this.deleteBranch(repo.full_name, branch);
+      throw e;
+    }
     const result: CommitResult = { branch, sha: put.content.sha };
     if (mode === 'pr') {
-      const pr = await this.req<{ html_url: string }>(`/repos/${repo.full_name}/pulls`, {
-        method: 'POST',
-        body: JSON.stringify({ title: message, head: branch, base: repo.default_branch }),
-      });
-      result.prUrl = pr.html_url;
+      try {
+        const pr = await this.req<{ html_url: string }>(`/repos/${repo.full_name}/pulls`, {
+          method: 'POST',
+          body: JSON.stringify({ title: message, head: branch, base: repo.default_branch }),
+        });
+        result.prUrl = pr.html_url;
+      } catch (e: unknown) {
+        const reason = e instanceof Error ? e.message : 'unknown error';
+        throw new GitHubError(
+          `Committed to ${branch}, but the pull request could not be opened: ${reason}`,
+          PARTIAL_COMMIT_STATUS,
+        );
+      }
     }
     return result;
   }
+
+  private async deleteBranch(fullName: string, branch: string): Promise<void> {
+    const { res } = await timedFetch(this.fetcher, `${API}/repos/${fullName}/git/refs/heads/${encodePath(branch)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/vnd.github+json' },
+    }).catch((e: unknown) => {
+      console.warn(`Could not delete branch ${branch}`, e);
+      return { res: null };
+    });
+    if (res && !res.ok) console.warn(`Could not delete branch ${branch}: ${res.status}`);
+  }
+}
+
+async function timedFetch(
+  fetcher: typeof fetch,
+  url: string,
+  init: RequestInit,
+): Promise<{ res: Response; body: unknown }> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetcher(url, { ...init, signal: controller.signal });
+    if (res.status === 204) return { res, body: undefined };
+    // A dropped connection mid-body on a success must surface as a network error.
+    const body: unknown = res.ok ? await res.json() : await res.json().catch(() => undefined);
+    return { res, body };
+  } catch (e: unknown) {
+    throw new GitHubError(
+      timedOut ? 'GitHub took too long to respond. Try again.' : 'Could not reach GitHub. Check your connection.',
+      NETWORK_ERROR_STATUS,
+      { cause: e },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function randomSuffix(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
+
+export function isConflict(e: unknown, hadSha: boolean): boolean {
+  if (!(e instanceof GitHubError)) return false;
+  return e.status === 409 || (e.status === 422 && !hadSha && e.message.includes('sha'));
 }
 
 export function encodePath(path: string): string {
@@ -216,7 +295,15 @@ export function isMarkdown(name: string): boolean {
 }
 
 export function isEditable(name: string): boolean {
-  return isMarkdown(name) || /\.(txt|ya?ml|json|toml|html|css|js|ts|tsx|go|rb|py|sh|csv)$/i.test(name) || !name.includes('.');
+  return isMarkdown(name) || /\.(txt|ya?ml|json|toml|html?|css|js|jsx|mjs|cjs|ts|tsx|go|rs|rb|py|sh|csv|xml|ini|sql)$/i.test(name) || !name.includes('.');
+}
+
+export function newFilePath(dir: string, input: string): string | null {
+  const name = input.trim();
+  const segments = name.split('/');
+  if (!name || segments.some(s => s === '' || s === '.' || s === '..')) return null;
+  const withExtension = /\.[^./]+$/.test(name) ? name : `${name}.md`;
+  return dir ? `${dir}/${withExtension}` : withExtension;
 }
 
 // ---- Device flow -----------------------------------------------------------
@@ -230,13 +317,17 @@ export interface DeviceCode {
 }
 
 async function postForm<T>(url: string, body: Record<string, string>, fetcher: typeof fetch): Promise<T> {
-  const res = await fetcher(url, {
+  const { res, body: json } = await timedFetch(fetcher, url, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new GitHubError(res.statusText, res.status);
-  return (await res.json()) as T;
+  return json as T;
+}
+
+export function isTransient(e: unknown): boolean {
+  return e instanceof GitHubError && (e.status === NETWORK_ERROR_STATUS || e.status >= 500);
 }
 
 export function startDeviceFlow(fetcher: typeof fetch = fetch): Promise<DeviceCode> {

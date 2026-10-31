@@ -1,8 +1,5 @@
 nodeLinker: hoisted
-
-overrides:
-  markdown-it: ^15.0.0
-
 allowBuilds:
   unrs-resolver: true
   '@parcel/watcher': true
+  esbuild: false

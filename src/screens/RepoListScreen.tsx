@@ -1,69 +1,90 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
-import { GitHubError, Repo } from '../lib/github';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { errorMessage } from '../lib/errors';
+import { Draft, listDrafts } from '../lib/localFiles';
+import { subscribeOutbox } from '../lib/outbox';
+import { useIsOnline } from '../lib/queryClient';
 import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RepoList'>;
 
+const REPOS_STALE_MS = 5 * 60 * 1000;
+
 export function RepoListScreen({ navigation }: Props) {
   const { github, recentRepos, addRecentRepo } = useAuth();
   const { theme } = useTheme();
-  const [repos, setRepos] = useState<Repo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const online = useIsOnline();
   const [query, setQuery] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const deferredQuery = useDeferredValue(query);
 
-  const loadRepos = useCallback(async () => {
-    if (!github) return;
-    try {
-      setError(null);
-      const list = await github.repos();
-      setRepos(list);
-    } catch (e: unknown) {
-      const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to load repositories';
-      setError(msg);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [github]);
+  const reposQuery = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => github!.repos(),
+    enabled: !!github,
+    staleTime: REPOS_STALE_MS,
+  });
+  const repos = useMemo(() => reposQuery.data ?? [], [reposQuery.data]);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      void loadRepos();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [loadRepos]);
-
-  function selectRepo(r: Repo) {
-    void addRecentRepo(r.full_name);
-    navigation.navigate('FileBrowser', { repoFullName: r.full_name, path: '' });
-  }
-
-  const filtered = repos.filter(
-    r =>
-      r.full_name.toLowerCase().includes(query.toLowerCase()) ||
-      (r.description && r.description.toLowerCase().includes(query.toLowerCase())),
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      const refresh = () => {
+        listDrafts()
+          .then(list => {
+            if (active) setDrafts(list);
+          })
+          .catch((e: unknown) => console.error('Could not list drafts', e));
+      };
+      refresh();
+      const unsubscribe = subscribeOutbox(refresh);
+      return () => {
+        active = false;
+        unsubscribe();
+      };
+    }, []),
   );
 
-  const recentList = recentRepos
-    .map(name => repos.find(r => r.full_name === name))
-    .filter(Boolean) as Repo[];
+  function selectRepo(fullName: string) {
+    addRecentRepo(fullName).catch((e: unknown) => console.error('Could not save recent repository', e));
+    navigation.navigate('FileBrowser', { repoFullName: fullName, path: '' });
+  }
 
-  const styles = StyleSheet.create({
+  function openDraft(draft: Draft) {
+    navigation.navigate('Editor', {
+      repoFullName: draft.repoFullName,
+      path: draft.path,
+      defaultBranch: draft.defaultBranch,
+      sha: draft.baseSha,
+      isNew: !draft.baseSha,
+    });
+  }
+
+  const filtered = useMemo(() => {
+    const needle = deferredQuery.toLowerCase();
+    return repos.filter(
+      r => r.full_name.toLowerCase().includes(needle) || r.description?.toLowerCase().includes(needle),
+    );
+  }, [repos, deferredQuery]);
+
+  const error = reposQuery.error ? errorMessage(reposQuery.error, 'Failed to load repositories') : null;
+  const loading = reposQuery.isLoading && !reposQuery.data;
+
+  const styles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: theme.colors.background,
@@ -161,7 +182,21 @@ export function RepoListScreen({ navigation }: Props) {
       textAlign: 'center',
       fontSize: 14,
     },
-  });
+    offline: {
+      backgroundColor: theme.colors.primaryBg,
+      color: theme.colors.text,
+      paddingVertical: 6,
+      paddingHorizontal: 16,
+      fontSize: 13,
+      textAlign: 'center',
+    },
+    empty: {
+      textAlign: 'center',
+      color: theme.colors.textMuted,
+      fontSize: 14,
+      marginTop: 24,
+    },
+  }), [theme]);
 
   return (
     <View style={styles.container}>
@@ -172,16 +207,19 @@ export function RepoListScreen({ navigation }: Props) {
           placeholderTextColor={theme.colors.placeholder}
           value={query}
           onChangeText={setQuery}
-          clearButtonMode="while-editing"
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Search repositories"
         />
-        <TouchableOpacity style={styles.settingsBtn} onPress={() => navigation.navigate('Settings')}>
+        <Pressable accessibilityRole="button" style={styles.settingsBtn} onPress={() => navigation.navigate('Settings')}>
           <Text style={styles.settingsBtnText}>Settings</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {online ? null : <Text style={styles.offline}>Offline. Showing saved repositories.</Text>}
+      {error && online ? <Text style={styles.error}>{error}</Text> : null}
 
-      {loading && !refreshing ? (
+      {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
@@ -191,38 +229,50 @@ export function RepoListScreen({ navigation }: Props) {
           keyExtractor={item => item.full_name}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void loadRepos();
-              }}
+              refreshing={reposQuery.isRefetching}
+              onRefresh={() => void reposQuery.refetch()}
               tintColor={theme.colors.primary}
             />
           }
+          keyboardShouldPersistTaps="handled"
           ListHeaderComponent={
-            recentList.length > 0 && !query ? (
+            !query && (drafts.length > 0 || recentRepos.length > 0) ? (
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Recent</Text>
-                {recentList.map(r => (
-                  <TouchableOpacity
-                    key={`recent-${r.full_name}`}
+                {drafts.length > 0 ? <Text style={styles.sectionTitle}>Drafts</Text> : null}
+                {drafts.map(d => (
+                  <Pressable
+                    key={`draft-${d.repoFullName}:${d.path}`}
+                    accessibilityRole="button"
                     style={styles.repoCard}
-                    onPress={() => selectRepo(r)}
+                    onPress={() => openDraft(d)}
                   >
-                    <Text style={styles.repoName}>{r.full_name}</Text>
-                    {r.description ? (
-                      <Text style={styles.repoDesc} numberOfLines={1}>
-                        {r.description}
-                      </Text>
-                    ) : null}
-                  </TouchableOpacity>
+                    <Text style={styles.repoName} numberOfLines={1}>{d.path}</Text>
+                    <Text style={styles.repoDesc} numberOfLines={2}>
+                      {d.repoFullName}
+                      {d.queued ? ' • Waiting to send' : d.sendError ? ` • Not sent: ${d.sendError}` : ''}
+                    </Text>
+                  </Pressable>
                 ))}
-                <Text style={[styles.sectionTitle, { marginTop: 16 }]}>All Repositories</Text>
+                {recentRepos.length > 0 ? <Text style={styles.sectionTitle}>Recent</Text> : null}
+                {recentRepos.map(name => (
+                  <Pressable
+                    key={`recent-${name}`}
+                    accessibilityRole="button"
+                    style={styles.repoCard}
+                    onPress={() => selectRepo(name)}
+                  >
+                    <Text style={styles.repoName}>{name}</Text>
+                  </Pressable>
+                ))}
+                <Text style={styles.sectionTitle}>All Repositories</Text>
               </View>
             ) : undefined
           }
+          ListEmptyComponent={
+            error ? undefined : <Text style={styles.empty}>{query ? 'No matching repositories.' : 'No repositories found.'}</Text>
+          }
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.repoCard} onPress={() => selectRepo(item)}>
+            <Pressable accessibilityRole="button" style={styles.repoCard} onPress={() => selectRepo(item.full_name)}>
               <View style={styles.repoRow}>
                 <Text style={styles.repoName}>{item.full_name}</Text>
                 {item.private ? <Text style={styles.badge}>Private</Text> : null}
@@ -232,7 +282,7 @@ export function RepoListScreen({ navigation }: Props) {
                   {item.description}
                 </Text>
               ) : null}
-            </TouchableOpacity>
+            </Pressable>
           )}
           contentContainerStyle={styles.list}
         />
