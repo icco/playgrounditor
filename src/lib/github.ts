@@ -27,6 +27,7 @@ export interface Entry {
   path: string;
   type: 'file' | 'dir' | 'symlink' | 'submodule';
   sha: string;
+  modified?: string;
 }
 
 export interface FileContent {
@@ -91,8 +92,15 @@ export class GitHub {
     }
   }
 
-  repo(fullName: string): Promise<Repo> {
-    return this.req<Repo>(`/repos/${fullName}`);
+  async getModifiedDate(fullName: string, path: string, ref: string): Promise<string | undefined> {
+    try {
+      const commits = await this.req<Array<{ commit: { committer: { date: string } } }>>(
+        `/repos/${fullName}/commits?path=${encodePath(path)}&ref=${encodeURIComponent(ref)}&per_page=1`,
+      );
+      return commits[0]?.commit?.committer?.date;
+    } catch {
+      return undefined;
+    }
   }
 
   async list(fullName: string, path: string, ref: string): Promise<Entry[]> {
@@ -157,13 +165,35 @@ export function encodePath(path: string): string {
   return path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
 
-export function sortEntries(entries: Entry[]): Entry[] {
+export function sortEntries(entries: Entry[], sortBy: 'name' | 'modified' = 'name'): Entry[] {
   return [...entries]
     .filter(e => !e.name.startsWith('.'))
     .sort((a, b) => {
+      if (sortBy === 'modified') {
+        const dateA = a.modified ? new Date(a.modified).getTime() : 0;
+        const dateB = b.modified ? new Date(b.modified).getTime() : 0;
+        if (dateA !== dateB) {
+          return dateB - dateA;
+        }
+      }
       if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+}
+
+export function formatDate(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
 }
 
 export function branchName(path: string, now: Date = new Date()): string {
