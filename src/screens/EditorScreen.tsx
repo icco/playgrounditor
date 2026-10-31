@@ -266,7 +266,7 @@ export function EditorScreen({ route, navigation }: Props) {
       }
       finishSave(committed, res.prUrl);
     } catch (e: unknown) {
-      persistDraftLogged();
+      if (!isTransient(e)) persistDraftLogged();
       if (isTransient(e)) {
         await queueSave(mode, committed, baseSha).catch((err: unknown) => {
           leavingWithoutDraft.current = false;

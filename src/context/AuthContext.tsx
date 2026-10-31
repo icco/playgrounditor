@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { AppState, ToastAndroid } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import * as Keychain from 'react-native-keychain';
-import { flushOutbox, subscribeOutbox } from '../lib/outbox';
+import { flushOutbox, stopOutbox, subscribeOutbox } from '../lib/outbox';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GitHub, User } from '../lib/github';
 import { clearLocalFiles } from '../lib/localFiles';
@@ -42,6 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [recentRepos, setRecentRepos] = useState<string[]>([]);
 
   const signOutLocally = useCallback(async () => {
+    stopOutbox();
     await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
     setToken(null);
     setUser(null);

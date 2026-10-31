@@ -1,6 +1,6 @@
 import { GitHub } from '../src/lib/github';
 import { clearLocalFiles, getDraft, saveDraft, writeDraft } from '../src/lib/localFiles';
-import { clearOpenFile, flushOutbox, setOpenFile } from '../src/lib/outbox';
+import { clearOpenFile, flushOutbox, setOpenFile, stopOutbox } from '../src/lib/outbox';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
   const store = new Map<string, string>();
@@ -62,6 +62,25 @@ describe('outbox', () => {
     setOpenFile('alice/notes', 'a.md');
     await flushOutbox(new GitHub('t', fetcher), jest.fn());
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('keeps newer text that arrives while a commit is sending', async () => {
+    const fetcher = jest.fn(async () => {
+      await saveDraft({ repoFullName: 'alice/notes', path: 'a.md', defaultBranch: 'main', text: 'newer', baseSha: 'old' });
+      return respond({ content: { sha: 'new' } });
+    });
+    await flushOutbox(new GitHub('t', fetcher), jest.fn());
+    expect((await getDraft('alice/notes', 'a.md'))?.text).toBe('newer');
+  });
+
+  it('stops sending after sign out', async () => {
+    await writeDraft({ ...queued, path: 'b.md' });
+    const fetcher = jest.fn(() => {
+      stopOutbox();
+      return Promise.resolve(respond({ content: { sha: 'new' } }));
+    });
+    await flushOutbox(new GitHub('t', fetcher), jest.fn());
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the queued commit when the draft is edited', async () => {

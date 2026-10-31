@@ -1,5 +1,5 @@
 import { CommitResult, GitHub, GitHubError, Repo, isTransient } from './github';
-import { Draft, cacheFile, deleteDraft, listDrafts, writeDraft } from './localFiles';
+import { Draft, cacheFile, deleteDraft, getDraft, listDrafts, writeDraft } from './localFiles';
 
 type Listener = () => void;
 
@@ -7,6 +7,11 @@ const listeners = new Set<Listener>();
 let openFile: string | null = null;
 let flushing = false;
 let flushAgain = false;
+let outboxSession = 0;
+
+export function stopOutbox(): void {
+  outboxSession += 1;
+}
 
 function fileId(repoFullName: string, path: string): string {
   return `${repoFullName}:${path}`;
@@ -63,20 +68,30 @@ export async function flushOutbox(github: GitHub, onSent: (draft: Draft) => void
     return;
   }
   flushing = true;
+  const session = outboxSession;
   try {
     do {
       flushAgain = false;
-      const drafts = await listDrafts();
-      for (const draft of drafts) {
-        if (!draft.queued || fileId(draft.repoFullName, draft.path) === openFile) continue;
+      for (const { repoFullName, path } of await listDrafts()) {
+        if (session !== outboxSession) return;
+        // Re-read each one: earlier sends take time, and the file may have been opened or edited since.
+        const draft = await getDraft(repoFullName, path);
+        if (!draft?.queued || fileId(repoFullName, path) === openFile) continue;
         try {
           await send(github, draft);
-          await deleteDraft(draft.repoFullName, draft.path);
+          if (session !== outboxSession) return;
+          if ((await getDraft(repoFullName, path))?.text === draft.text) {
+            await deleteDraft(repoFullName, path);
+          }
           onSent(draft);
         } catch (e: unknown) {
+          if (session !== outboxSession) return;
           if (isTransient(e) || (e instanceof GitHubError && e.status === 401)) return;
-          const sendError = e instanceof Error ? e.message : 'Could not send this commit';
-          await writeDraft({ ...draft, queued: undefined, sendError });
+          const current = await getDraft(repoFullName, path);
+          if (current) {
+            const sendError = e instanceof Error ? e.message : 'Could not send this commit';
+            await writeDraft({ ...current, queued: undefined, sendError });
+          }
         }
         notify();
       }
