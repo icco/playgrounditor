@@ -10,7 +10,6 @@ Download the APK from the [latest release](https://github.com/icco/playgroundito
 
 1. Sign in with GitHub, or paste a personal access token with `repo` scope.
 2. Pick a repository and browse to a file, or tap + to start a new Markdown file.
-3. Tap Save, then open a pull request or commit to the default branch.
 
 ## Development
 

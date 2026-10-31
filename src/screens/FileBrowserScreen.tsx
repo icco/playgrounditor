@@ -272,7 +272,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
               tintColor={theme.colors.primary}
             />
           }
-          ListEmptyComponent={failure ? null : <Text style={styles.empty}>This folder is empty.</Text>}
+          ListEmptyComponent={failure ? undefined : <Text style={styles.empty}>This folder is empty.</Text>}
           renderItem={({ item }) => {
             const isMd = isMarkdown(item.name);
             return (

@@ -260,7 +260,7 @@ export function RepoListScreen({ navigation }: Props) {
             ) : undefined
           }
           ListEmptyComponent={
-            error ? null : <Text style={styles.empty}>{query ? 'No matching repositories.' : 'No repositories found.'}</Text>
+            error ? undefined : <Text style={styles.empty}>{query ? 'No matching repositories.' : 'No repositories found.'}</Text>
           }
           renderItem={({ item }) => (
             <Pressable accessibilityRole="button" style={styles.repoCard} onPress={() => selectRepo(item.full_name)}>

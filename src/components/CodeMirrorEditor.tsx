@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { WebView, WebViewMessageEvent } from 'react-native-webview';
+import { WebView, WebViewMessageEvent, WebViewProps } from 'react-native-webview';
 import { useTheme } from '../theme/ThemeContext';
 import type { Theme } from '../theme/types';
 import type { EditorColors, EditorInbound, EditorOutbound } from '../editor/protocol';
+
+// WebView's class typings resolve its props to never under TypeScript 6.
+const EditorWebView = WebView as unknown as React.ComponentType<WebViewProps & React.RefAttributes<WebView>>;
 
 interface Props {
   initialValue: string;
@@ -76,7 +79,7 @@ export function CodeMirrorEditor({ initialValue, onChangeText, path, preview }: 
 
   return (
     <View style={styles.container}>
-      <WebView
+      <EditorWebView
         key={generation}
         ref={webView}
         source={{ uri: 'file:///android_asset/editor/index.html' }}
