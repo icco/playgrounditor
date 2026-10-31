@@ -61,22 +61,6 @@ describe('GitHub requests', () => {
     await expect(new GitHub('t', fetcher).read('alice/notes', 'a.txt', 'main')).rejects.toThrow('UTF-8');
   });
 
-  it('never runs more than five date lookups at once', async () => {
-    let inFlight = 0;
-    let peak = 0;
-    const fetcher = jest.fn(async () => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await Promise.resolve();
-      inFlight -= 1;
-      return respond([{ commit: { committer: { date: '2026-10-01T00:00:00Z' } } }]);
-    });
-    const paths = Array.from({ length: 12 }, (_, i) => `f${i}.md`);
-    const dates = await new GitHub('t', fetcher).modifiedDates('alice/notes', paths, 'main');
-    expect(Object.keys(dates)).toHaveLength(12);
-    expect(peak).toBeLessThanOrEqual(5);
-  });
-
   it('removes the new branch when the commit fails', async () => {
     const fetcher = jest
       .fn()
@@ -106,11 +90,44 @@ describe('GitHub requests', () => {
 });
 
 describe('modified dates', () => {
-  it('stops at one hundred lookups', async () => {
-    const fetcher = jest.fn().mockImplementation(() => Promise.resolve(respond([])));
-    const paths = Array.from({ length: 150 }, (_, i) => `f${i}.md`);
-    await new GitHub('t', fetcher).modifiedDates('alice/notes', paths, 'main');
-    expect(fetcher).toHaveBeenCalledTimes(100);
+  function historyResponse(init: RequestInit): Response {
+    const { variables } = JSON.parse(init.body as string) as { variables: Record<string, string> };
+    const object = Object.fromEntries(
+      Object.entries(variables)
+        .filter(([key]) => /^p\d+$/.test(key))
+        .map(([key, path]) => [`f${key.slice(1)}`, { nodes: [{ committedDate: `date-${path}` }] }]),
+    );
+    return respond({ data: { repository: { object } } });
+  }
+
+  it('dates every path in a large folder, one batch at a time', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const fetcher = jest.fn(async (_url: string, init: RequestInit) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return historyResponse(init);
+    });
+    const paths = Array.from({ length: 250 }, (_, i) => `f${i}.md`);
+    const dates = await new GitHub('t', fetcher as unknown as typeof fetch).modifiedDates('alice/notes', paths, 'main');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(peak).toBe(1);
+    expect(Object.keys(dates)).toHaveLength(250);
+    expect(dates['f249.md']).toBe('date-f249.md');
+  });
+
+  it('omits paths with no history', async () => {
+    const fetcher = jest.fn().mockResolvedValue(respond({ data: { repository: { object: { f0: { nodes: [] } } } } }));
+    await expect(new GitHub('t', fetcher).modifiedDates('alice/notes', ['a.md'], 'main')).resolves.toEqual({});
+  });
+
+  it('surfaces errors from a successful GraphQL response', async () => {
+    const fetcher = jest.fn().mockResolvedValue(respond({ errors: [{ message: 'API rate limit exceeded' }] }));
+    const failure = await new GitHub('t', fetcher).modifiedDates('alice/notes', ['a.md'], 'main').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(GitHubError);
+    expect(isTransient(failure)).toBe(true);
   });
 });
 
