@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import WebView from 'react-native-webview';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useTheme } from '../theme/ThemeContext';
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
 
 export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
   const { theme } = useTheme();
-  const webViewRef = useRef<any>(null);
+  const webViewRef = useRef<WebView>(null);
 
   const htmlContent = `<!DOCTYPE html>
 <html>
@@ -124,14 +124,17 @@ export function CodeMirrorEditor({ value, onChangeText, path }: Props) {
 </body>
 </html>`;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const WebViewComponent = WebView as unknown as React.ComponentType<any>;
+
   return (
     <View style={styles.container}>
-      <WebView
+      <WebViewComponent
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: htmlContent }}
         style={{ backgroundColor: theme.colors.background }}
-        onMessage={(event: any) => {
+        onMessage={(event: WebViewMessageEvent) => {
           onChangeText(event.nativeEvent.data);
         }}
         javaScriptEnabled

@@ -62,7 +62,7 @@ function MainNavigator() {
             <Stack.Screen
               name="RepoList"
               component={RepoListScreen}
-              options={({ navigation }) => ({
+              options={() => ({
                 title: 'Playgrounditor',
                 headerRight: () => (
                   <></>
