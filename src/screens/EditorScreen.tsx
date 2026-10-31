@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -158,14 +157,6 @@ export function EditorScreen({ route, navigation }: Props) {
       fontSize: 13,
       fontWeight: '600',
       color: theme.colors.onPrimary,
-    },
-    editor: {
-      flex: 1,
-      padding: 16,
-      fontSize: 16,
-      color: theme.colors.text,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      lineHeight: 24,
     },
     previewContainer: {
       flex: 1,
