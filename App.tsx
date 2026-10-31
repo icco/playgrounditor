@@ -41,7 +41,7 @@ function MainNavigator() {
               name="RepoList"
               component={RepoListScreen}
               options={({ navigation }) => ({
-                title: 'Playgrouditor',
+                title: 'Playgrounditor',
                 headerRight: () => (
                   <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
                     <Text style={styles.headerButton}>Settings</Text>

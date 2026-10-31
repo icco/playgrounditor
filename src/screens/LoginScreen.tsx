@@ -101,7 +101,7 @@ export function LoginScreen() {
       style={styles.container}
     >
       <View style={styles.card}>
-        <Text style={styles.title}>Playgrouditor</Text>
+        <Text style={styles.title}>Playgrounditor</Text>
         <Text style={styles.subtitle}>Calm mobile markdown editor for GitHub</Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
