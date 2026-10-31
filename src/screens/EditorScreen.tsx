@@ -282,7 +282,8 @@ export function EditorScreen({ route, navigation }: Props) {
     heading3: { color: theme.colors.text },
     paragraph: { color: theme.colors.text },
     link: { color: theme.colors.primary },
-    block_quote: { borderLeftColor: theme.colors.primary, backgroundColor: theme.colors.surface },
+    blockquote: { borderLeftColor: theme.colors.primary, backgroundColor: theme.colors.surface, color: theme.colors.text },
+    fence: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
     code_inline: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
     code_block: { backgroundColor: theme.colors.inputBg, color: theme.colors.text },
   };
