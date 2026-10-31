@@ -149,6 +149,8 @@ export function SettingsScreen() {
                 key={m.key}
                 style={[styles.optionBtn, active && styles.optionActive]}
                 onPress={() => void setAppearanceMode(m.key)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: active }}
               >
                 <Text style={[styles.optionText, active && styles.optionTextActive]}>{m.label}</Text>
               </TouchableOpacity>
@@ -165,6 +167,8 @@ export function SettingsScreen() {
                 key={t.key}
                 style={[styles.optionBtn, active && styles.optionActive]}
                 onPress={() => void setThemeName(t.key)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: active }}
               >
                 <View style={[styles.swatch, { backgroundColor: t.swatch }]} />
                 <Text style={[styles.optionText, active && styles.optionTextActive]}>{t.label}</Text>
