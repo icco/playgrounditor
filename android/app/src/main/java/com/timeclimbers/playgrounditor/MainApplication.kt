@@ -1,4 +1,4 @@
-package com.timeclimbers.playgrouditor
+package com.timeclimbers.playgrounditor
 
 import android.app.Application
 import com.facebook.react.PackageList

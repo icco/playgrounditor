@@ -1,4 +1,4 @@
-# playgrouditor
+# playgrounditor
 
 An Android editor for text files in your GitHub repositories.
 

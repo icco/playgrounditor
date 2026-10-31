@@ -174,7 +174,7 @@ export function branchName(path: string, now: Date = new Date()): string {
     .replace(/^-|-$/g, '')
     .slice(0, 40);
   const stamp = now.toISOString().slice(0, 16).replace(/[-:T]/g, '');
-  return `playgrouditor/${base || 'edit'}-${stamp}`;
+  return `playgrounditor/${base || 'edit'}-${stamp}`;
 }
 
 export function isMarkdown(name: string): boolean {

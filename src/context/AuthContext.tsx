@@ -16,8 +16,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const KEYCHAIN_SERVICE = 'com.timeclimbers.playgrouditor.token';
-const RECENT_KEY = '@playgrouditor:recent_repos';
+const KEYCHAIN_SERVICE = 'com.timeclimbers.playgrounditor.token';
+const RECENT_KEY = '@playgrounditor:recent_repos';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);

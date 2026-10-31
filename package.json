@@ -1,6 +1,6 @@
 {
-  "name": "playgrouditor",
-  "version": "0.1.0",
+  "name": "playgrounditor",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
