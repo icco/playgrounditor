@@ -92,6 +92,10 @@ export class GitHub {
     }
   }
 
+  repo(fullName: string): Promise<Repo> {
+    return this.req<Repo>(`/repos/${fullName}`);
+  }
+
   async getModifiedDate(fullName: string, path: string, ref: string): Promise<string | undefined> {
     try {
       const commits = await this.req<Array<{ commit: { committer: { date: string } } }>>(

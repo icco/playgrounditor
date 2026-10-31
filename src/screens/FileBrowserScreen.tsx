@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { Entry, GitHubError, Repo, isEditable, isMarkdown } from '../lib/github';
+import { Entry, GitHubError, Repo, formatDate, isEditable, isMarkdown, sortEntries } from '../lib/github';
 import { useFocusEffect, usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -25,6 +25,8 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const [repo, setRepo] = useState<Repo | null>(null);
   const repoRef = useRef<Repo | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [rawEntries, setRawEntries] = useState<Entry[]>([]);
+  const [sortBy, setSortBy] = useState<'name' | 'modified'>('name');
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,10 +45,12 @@ export function FileBrowserScreen({ route, navigation }: Props) {
       repoRef.current = r;
       setRepo(r);
       const list = await github.list(repoFullName, currentPath, r.default_branch);
-      if (load === latestLoad.current) setEntries(list);
+      if (load !== latestLoad.current) return;
+      setRawEntries(list);
     } catch (e: unknown) {
       if (load !== latestLoad.current) return;
       const msg = e instanceof GitHubError || e instanceof Error ? e.message : 'Failed to load directory';
+      setRawEntries([]);
       setEntries([]);
       setError(msg);
     } finally {
@@ -56,6 +60,40 @@ export function FileBrowserScreen({ route, navigation }: Props) {
       }
     }
   }, [github, repoFullName, currentPath]);
+
+  useEffect(() => {
+    let active = true;
+    async function processSorting() {
+      if (!github || rawEntries.length === 0) {
+        setEntries(sortEntries(rawEntries, sortBy));
+        return;
+      }
+
+      if (sortBy === 'modified') {
+        const needsFetch = rawEntries.some(e => e.modified === undefined);
+        if (needsFetch && repo) {
+          const updated = await Promise.all(
+            rawEntries.map(async entry => {
+              if (entry.modified !== undefined) return entry;
+              const modified = await github.getModifiedDate(repoFullName, entry.path, repo.default_branch);
+              return { ...entry, modified };
+            }),
+          );
+          if (!active) return;
+          setRawEntries(updated);
+          setEntries(sortEntries(updated, 'modified'));
+          return;
+        }
+      }
+
+      setEntries(sortEntries(rawEntries, sortBy));
+    }
+
+    void processSorting();
+    return () => {
+      active = false;
+    };
+  }, [sortBy, rawEntries, github, repoFullName, repo]);
 
   useFocusEffect(
     useCallback(() => {
@@ -127,6 +165,22 @@ export function FileBrowserScreen({ route, navigation }: Props) {
         })}
       </View>
 
+      <View style={styles.sortRow}>
+        <Text style={styles.sortLabel}>Sort by:</Text>
+        <TouchableOpacity
+          style={[styles.sortBtn, sortBy === 'name' && styles.sortBtnActive]}
+          onPress={() => setSortBy('name')}
+        >
+          <Text style={[styles.sortBtnText, sortBy === 'name' && styles.sortBtnTextActive]}>Name</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.sortBtn, sortBy === 'modified' && styles.sortBtnActive]}
+          onPress={() => setSortBy('modified')}
+        >
+          <Text style={[styles.sortBtnText, sortBy === 'modified' && styles.sortBtnTextActive]}>Modified</Text>
+        </TouchableOpacity>
+      </View>
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {loading && !refreshing ? (
@@ -155,9 +209,14 @@ export function FileBrowserScreen({ route, navigation }: Props) {
                 onPress={() => handlePress(item)}
               >
                 <Text style={styles.rowIcon}>{item.type === 'dir' ? '📁' : isMd ? '📝' : '📄'}</Text>
-                <Text style={[styles.rowText, isMd && styles.rowMd]} numberOfLines={1}>
-                  {item.name}
-                </Text>
+                <View style={styles.rowInfo}>
+                  <Text style={[styles.rowText, isMd && styles.rowMd]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  {item.modified ? (
+                    <Text style={styles.rowDate}>{formatDate(item.modified)}</Text>
+                  ) : null}
+                </View>
               </TouchableOpacity>
             );
           }}
@@ -264,6 +323,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#16161A',
     flex: 1,
+  },
+  rowInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  rowDate: {
+    fontSize: 12,
+    color: '#686D76',
+    marginLeft: 8,
+  },
+  sortRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  sortLabel: {
+    fontSize: 13,
+    color: '#686D76',
+    marginRight: 8,
+    fontWeight: '500',
+  },
+  sortBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
+    marginRight: 6,
+  },
+  sortBtnActive: {
+    backgroundColor: '#3A5A40',
+  },
+  sortBtnText: {
+    fontSize: 13,
+    color: '#4B5563',
+    fontWeight: '500',
+  },
+  sortBtnTextActive: {
+    color: '#FAF8F5',
   },
   rowMd: {
     fontWeight: '600',
