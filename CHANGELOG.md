@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/icco/[secure]/compare/v1.0.0...v1.0.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **editor:** keep text and save dialog above the keyboard on android ([#6](https://github.com/icco/[secure]/issues/6)) ([542c297](https://github.com/icco/[secure]/commit/542c29715763b8ebcaf4ad1b20d48f0ceeaccaa1))
+
 # 1.0.0 (2026-10-31)
 
 
