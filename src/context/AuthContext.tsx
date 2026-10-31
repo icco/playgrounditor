@@ -1,11 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { AppState, ToastAndroid } from 'react-native';
+import { Alert, AppState, ToastAndroid } from 'react-native';
 import { onlineManager } from '@tanstack/react-query';
 import * as Keychain from 'react-native-keychain';
-import { flushOutbox, stopOutbox, subscribeOutbox } from '../lib/outbox';
+import { flushOutbox, startOutbox, stopOutbox, subscribeOutbox } from '../lib/outbox';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GitHub, User } from '../lib/github';
-import { clearLocalFiles } from '../lib/localFiles';
+import { clearLocalFiles, listDrafts } from '../lib/localFiles';
 import { persister, queryClient } from '../lib/queryClient';
 
 interface AuthContextType {
@@ -33,6 +33,20 @@ function parseStored<T>(raw: string | null): T | null {
     console.warn('Ignoring unreadable stored value', e);
     return null;
   }
+}
+
+function confirmDraftLoss(count: number, login: string): Promise<boolean> {
+  return new Promise(resolve => {
+    Alert.alert(
+      `Switch to ${login}?`,
+      `This deletes ${count} uncommitted draft${count === 1 ? '' : 's'} left by the previous account from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Delete and continue', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: false },
+    );
+  });
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -89,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!github) return;
+    startOutbox();
     const flush = () => {
       if (!onlineManager.isOnline()) return;
       flushOutbox(github, draft => {
@@ -115,6 +130,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Data kept after a rejected token belongs to that account, and queued commits must not send as another.
     const previous = parseStored<User>(await AsyncStorage.getItem(USER_KEY));
     if (previous && previous.login !== u.login) {
+      const drafts = await listDrafts();
+      if (drafts.length && !(await confirmDraftLoss(drafts.length, u.login))) {
+        throw new Error('Sign in cancelled. Your drafts are still on this device.');
+      }
       queryClient.clear();
       setRecentRepos([]);
       await Promise.all([persister.removeClient(), clearLocalFiles(), AsyncStorage.removeItem(RECENT_KEY)]);

@@ -17,8 +17,9 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
-import { GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isMarkdown, isTransient } from '../lib/github';
+import { Repo, isConflict, isMarkdown, isTransient } from '../lib/github';
 import { clearOpenFile, notifyOutbox, queueCommit, setOpenFile } from '../lib/outbox';
+import { resolveEditorStart } from '../lib/editorStart';
 import { cacheFile, deleteDraft, getCachedFile, getDraft, saveDraft } from '../lib/localFiles';
 import { errorMessage } from '../lib/errors';
 import { queryClient, useIsOnline } from '../lib/queryClient';
@@ -146,27 +147,16 @@ export function EditorScreen({ route, navigation }: Props) {
           if (!active) return;
         }
 
-        const isNetworkFailure = fetchError instanceof GitHubError && fetchError.status === NETWORK_ERROR_STATUS;
-        // A draft must stay reachable even if its file was deleted or renamed on GitHub.
-        if (fetchError && !draft && !(isNetworkFailure && base)) {
-          setLoadError(errorMessage(fetchError, 'Failed to read file'));
+        const start = resolveEditorStart(draft, base, fetchError);
+        if ('error' in start) {
+          setLoadError(start.error);
           return;
         }
-
-        const server = base?.text ?? '';
-        const start = draft?.text ?? server;
-        setSavedText(server);
-        setText(start);
-        // A draft keeps its original base so a commit fails with a conflict if the file moved on.
-        setSha(draft && draft.text !== server ? draft.baseSha : base?.sha);
-        setRestoredDraft(!!draft && draft.text !== server);
-        if (draft?.sendError) setNotice(`Not sent: ${draft.sendError}`);
-        else if (draft?.queued) setNotice('Queued to send when you leave this file while online.');
-        else if (fetchError && !isNetworkFailure) setNotice(`Could not load from GitHub: ${errorMessage(fetchError, 'unknown error')}`);
-        else if (fetchError) setNotice('Showing the copy saved on this device.');
-        else if (draft?.baseSha && base && draft.baseSha !== base.sha) {
-          setNotice('This file changed on GitHub since your draft was started.');
-        }
+        setSavedText(start.savedText);
+        setText(start.text);
+        setSha(start.sha);
+        setRestoredDraft(start.restoredDraft);
+        setNotice(start.notice);
         setEditorRevision(r => r + 1);
       } catch (e: unknown) {
         if (active) setLoadError(errorMessage(e, 'Failed to read file'));
@@ -408,7 +398,7 @@ export function EditorScreen({ route, navigation }: Props) {
     [theme, insets.bottom],
   );
 
-  const saveDisabled = saving || loading || !!loadError;
+  const saveDisabled = saving || loading || !!loadError || (!dirty && !isNew);
 
   return (
     <KeyboardAvoidingView behavior="padding" style={styles.container}>

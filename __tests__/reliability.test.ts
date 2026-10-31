@@ -1,5 +1,5 @@
 import { decodeUtf8Strict, encodeBase64 } from '../src/lib/base64';
-import { GitHub, GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isEditable, isTransient, newFilePath } from '../src/lib/github';
+import { Entry, GitHub, GitHubError, NETWORK_ERROR_STATUS, Repo, isConflict, isEditable, isTransient, newFilePath, sortEntries } from '../src/lib/github';
 import { cacheFile, clearLocalFiles, deleteDraft, getCachedFile, getDraft, listDrafts, saveDraft } from '../src/lib/localFiles';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
@@ -102,6 +102,33 @@ describe('GitHub requests', () => {
     const result = await new GitHub('t', fetcher).commit({ repo: release, path: 'a.md', text: 'x', message: 'm', mode: 'pr' });
     expect((fetcher.mock.calls[0] as [string])[0]).toContain('/git/ref/heads/release/1');
     expect(result.prUrl).toContain('/pull/1');
+  });
+});
+
+describe('modified dates', () => {
+  it('stops at one hundred lookups', async () => {
+    const fetcher = jest.fn().mockImplementation(() => Promise.resolve(respond([])));
+    const paths = Array.from({ length: 150 }, (_, i) => `f${i}.md`);
+    await new GitHub('t', fetcher).modifiedDates('alice/notes', paths, 'main');
+    expect(fetcher).toHaveBeenCalledTimes(100);
+  });
+});
+
+describe('transient errors', () => {
+  it('retries rate limits but not other refusals', () => {
+    expect(isTransient(new GitHubError('Too many requests', 429))).toBe(true);
+    expect(isTransient(new GitHubError('API rate limit exceeded', 403))).toBe(true);
+    expect(isTransient(new GitHubError('Resource not accessible', 403))).toBe(false);
+  });
+});
+
+describe('sorting', () => {
+  it('orders files and submodules by name, whatever the input order', () => {
+    const entry = (name: string, type: Entry['type']) => ({ name, path: name, type, sha: name });
+    const a = entry('a', 'submodule');
+    const b = entry('b', 'file');
+    expect(sortEntries([a, b]).map(e => e.name)).toEqual(['a', 'b']);
+    expect(sortEntries([b, a]).map(e => e.name)).toEqual(['a', 'b']);
   });
 });
 

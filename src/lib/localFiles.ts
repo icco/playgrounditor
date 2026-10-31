@@ -26,7 +26,7 @@ export interface CachedFile {
   text: string;
 }
 
-function fileId(repoFullName: string, path: string): string {
+export function fileId(repoFullName: string, path: string): string {
   return `${repoFullName}:${path}`;
 }
 
@@ -46,10 +46,11 @@ export function getDraft(repoFullName: string, path: string): Promise<Draft | nu
   return readJson<Draft>(DRAFT_PREFIX + fileId(repoFullName, path));
 }
 
-// Further edits keep a queued commit, so it sends the newest text.
+// Further edits keep a queued commit and its base, so it sends the newest text.
 export async function saveDraft(draft: Omit<Draft, 'updatedAt'>): Promise<void> {
   const existing = await getDraft(draft.repoFullName, draft.path);
-  await writeDraft({ queued: existing?.queued, sendError: existing?.sendError, ...draft });
+  const baseSha = existing?.queued ? existing.baseSha : draft.baseSha;
+  await writeDraft({ queued: existing?.queued, sendError: existing?.sendError, ...draft, baseSha });
 }
 
 export async function writeDraft(draft: Omit<Draft, 'updatedAt'>): Promise<void> {

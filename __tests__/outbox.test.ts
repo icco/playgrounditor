@@ -1,6 +1,7 @@
+import { encodeBase64 } from '../src/lib/base64';
 import { GitHub } from '../src/lib/github';
 import { clearLocalFiles, getDraft, saveDraft, writeDraft } from '../src/lib/localFiles';
-import { clearOpenFile, flushOutbox, setOpenFile, stopOutbox } from '../src/lib/outbox';
+import { clearOpenFile, flushOutbox, setOpenFile, startOutbox, stopOutbox, subscribeOutbox } from '../src/lib/outbox';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
   const store = new Map<string, string>();
@@ -30,6 +31,7 @@ const queued = {
 
 describe('outbox', () => {
   beforeEach(async () => {
+    startOutbox();
     clearOpenFile();
     await clearLocalFiles();
     await writeDraft(queued);
@@ -57,6 +59,56 @@ describe('outbox', () => {
     expect(draft?.sendError).toBe('does not match');
   });
 
+  it('treats a conflict as sent when GitHub already has this text', async () => {
+    const onSent = jest.fn();
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(respond({ message: 'does not match' }, 409))
+      .mockResolvedValueOnce(respond({ path: 'a.md', sha: 'new', encoding: 'base64', content: encodeBase64('hello') }));
+    await flushOutbox(new GitHub('t', fetcher), onSent);
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(await getDraft('alice/notes', 'a.md')).toBeNull();
+  });
+
+  it('sends the oldest queued commit first', async () => {
+    await new Promise<void>(resolve => setTimeout(resolve, 2));
+    await writeDraft({ ...queued, path: 'b.md' });
+    const fetcher = jest.fn().mockImplementation(() => Promise.resolve(respond({ content: { sha: 'new' } })));
+    await flushOutbox(new GitHub('t', fetcher), jest.fn());
+    expect((fetcher.mock.calls[0] as [string])[0]).toContain('/contents/a.md');
+  });
+
+  it('asks for another run when a request arrives during one that stops early', async () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeOutbox(listener);
+    const github: GitHub = new GitHub('t', jest.fn(() => {
+      stopOutbox();
+      startOutbox();
+      void flushOutbox(github, jest.fn());
+      return Promise.resolve(respond({ content: { sha: 'new' } }));
+    }));
+    await flushOutbox(github, jest.fn());
+    unsubscribe();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart after sign out, even with a request pending', async () => {
+    const listener = jest.fn();
+    const unsubscribe = subscribeOutbox(listener);
+    await writeDraft({ ...queued, path: 'b.md' });
+    const fetcher = jest.fn(() => {
+      void flushOutbox(github, jest.fn());
+      stopOutbox();
+      return Promise.resolve(respond({ content: { sha: 'new' } }));
+    });
+    const github: GitHub = new GitHub('t', fetcher);
+    await flushOutbox(github, jest.fn());
+    await flushOutbox(github, jest.fn());
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a file alone while it is open', async () => {
     const fetcher = jest.fn();
     setOpenFile('alice/notes', 'a.md');
@@ -70,7 +122,9 @@ describe('outbox', () => {
       return respond({ content: { sha: 'new' } });
     });
     await flushOutbox(new GitHub('t', fetcher), jest.fn());
-    expect((await getDraft('alice/notes', 'a.md'))?.text).toBe('newer');
+    const draft = await getDraft('alice/notes', 'a.md');
+    expect(draft?.text).toBe('newer');
+    expect(draft?.baseSha).toBe('new');
   });
 
   it('stops sending after sign out', async () => {
