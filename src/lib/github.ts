@@ -3,9 +3,7 @@ import { GITHUB_CLIENT_ID } from '../config';
 
 const API = 'https://api.github.com';
 const REQUEST_TIMEOUT_MS = 30_000;
-const MODIFIED_BATCH_SIZE = 5;
-// shortcut: later entries show no date, upgrade to a single GraphQL query if big folders need them.
-const MODIFIED_LOOKUP_LIMIT = 100;
+const MODIFIED_BATCH_SIZE = 100;
 
 export const NETWORK_ERROR_STATUS = 0;
 // The commit landed, so this must never count as transient and be sent twice.
@@ -101,25 +99,38 @@ export class GitHub {
     return this.req<Repo>(`/repos/${fullName}`);
   }
 
-  async getModifiedDate(fullName: string, path: string, ref: string): Promise<string | undefined> {
-    const commits = await this.req<Array<{ commit: { committer: { date: string } } }>>(
-      `/repos/${fullName}/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(ref)}&per_page=1`,
-    );
-    return commits[0]?.commit?.committer?.date;
-  }
-
-  // Sequential batches, because a parallel burst per file trips GitHub's secondary rate limit.
+  // Sequential batches, because a parallel burst trips GitHub's secondary rate limit.
   async modifiedDates(fullName: string, paths: string[], ref: string): Promise<Record<string, string>> {
     const dates: Record<string, string> = {};
-    const lookups = paths.slice(0, MODIFIED_LOOKUP_LIMIT);
-    for (let i = 0; i < lookups.length; i += MODIFIED_BATCH_SIZE) {
-      const batch = lookups.slice(i, i + MODIFIED_BATCH_SIZE);
-      const results = await Promise.all(batch.map(p => this.getModifiedDate(fullName, p, ref)));
-      results.forEach((date, j) => {
-        if (date) dates[batch[j]] = date;
+    for (let i = 0; i < paths.length; i += MODIFIED_BATCH_SIZE) {
+      const batch = paths.slice(i, i + MODIFIED_BATCH_SIZE);
+      const history = await this.batchHistory(fullName, batch, ref);
+      batch.forEach((path, j) => {
+        const date = history?.[`f${j}`]?.nodes[0]?.committedDate;
+        if (date) dates[path] = date;
       });
     }
     return dates;
+  }
+
+  private async batchHistory(fullName: string, paths: string[], ref: string) {
+    const [owner, name] = fullName.split('/');
+    const params = paths.map((_, i) => `$p${i}: String!`).join(', ');
+    const fields = paths.map((_, i) => `f${i}: history(first: 1, path: $p${i}) { nodes { committedDate } }`).join(' ');
+    const query = `query($owner: String!, $name: String!, $ref: String!, ${params}) {
+      repository(owner: $owner, name: $name) { object(expression: $ref) { ... on Commit { ${fields} } } }
+    }`;
+    const variables = Object.fromEntries(paths.map((p, i) => [`p${i}`, p]));
+    const { data, errors } = await this.req<{
+      data?: { repository?: { object?: Record<string, { nodes: Array<{ committedDate: string }> }> | null } | null };
+      errors?: Array<{ message: string }>;
+    }>('/graphql', {
+      method: 'POST',
+      body: JSON.stringify({ query, variables: { owner, name, ref, ...variables } }),
+    });
+    // GraphQL reports failures in a 200 body; 403 lets isTransient retry rate limits by message.
+    if (errors?.length) throw new GitHubError(errors[0].message, 403);
+    return data?.repository?.object;
   }
 
   async list(fullName: string, path: string, ref: string): Promise<Entry[]> {
