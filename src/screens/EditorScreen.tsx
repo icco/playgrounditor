@@ -99,7 +99,8 @@ export function EditorScreen({ route, navigation }: Props) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Edge-to-edge (targetSdk 35+) disables adjustResize, so Android needs padding too.
+      behavior="padding"
       style={styles.container}
     >
       <View style={styles.topBar}>
