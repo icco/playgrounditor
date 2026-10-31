@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useQuery } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
@@ -30,7 +30,9 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const { github } = useAuth();
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const [sortBy, setSortBy] = useState<SortBy>(route.params.sortBy ?? 'name');
+  const queryClient = useQueryClient();
+  // Lives in the persisted query cache so every open folder and later session share it.
+  const { data: sortBy = 'name' } = useQuery<SortBy>({ queryKey: ['sortBy'], queryFn: skipToken });
   const [modalVisible, setModalVisible] = useState(false);
   const [newFileName, setNewFileName] = useState('');
 
@@ -66,7 +68,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const breadcrumbs = currentPath ? currentPath.split('/') : [];
 
   function openDir(path: string) {
-    navigation.push('FileBrowser', { repoFullName, path, sortBy });
+    navigation.push('FileBrowser', { repoFullName, path });
   }
 
   // Each directory level is its own stack entry, so a crumb's distance is its depth difference.
@@ -243,7 +245,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
             accessibilityRole="radio"
             accessibilityState={{ checked: sortBy === option }}
             style={[styles.sortBtn, sortBy === option && styles.sortBtnActive]}
-            onPress={() => setSortBy(option)}
+            onPress={() => queryClient.setQueryData<SortBy>(['sortBy'], option)}
           >
             <Text style={[styles.sortBtnText, sortBy === option && styles.sortBtnTextActive]}>
               {option === 'name' ? 'Name' : 'Modified'}
