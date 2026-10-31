@@ -1,5 +1,5 @@
 import { encodeBase64, decodeBase64 } from '../src/lib/base64';
-import { GitHub, GitHubError, branchName, sortEntries, isMarkdown } from '../src/lib/github';
+import { GitHub, GitHubError, branchName, sortEntries, isMarkdown, formatDate } from '../src/lib/github';
 
 function jsonResponse(body: unknown): Response {
   return { ok: true, json: () => Promise.resolve(body) } as Response;
@@ -51,7 +51,22 @@ describe('github helper functions', () => {
       { name: 'a-dir', path: 'a-dir', type: 'dir' as const, sha: '3' },
       { name: 'a.md', path: 'a.md', type: 'file' as const, sha: '4' },
     ];
-    const sorted = sortEntries(entries);
+    const sorted = sortEntries(entries, 'name');
     expect(sorted.map(e => e.name)).toEqual(['a-dir', 'a.md', 'b.md']);
+  });
+
+  it('sorts entries by modified date descending', () => {
+    const entries = [
+      { name: 'older.md', path: 'older.md', type: 'file' as const, sha: '1', modified: '2026-10-01T10:00:00Z' },
+      { name: 'newer.md', path: 'newer.md', type: 'file' as const, sha: '2', modified: '2026-10-30T10:00:00Z' },
+      { name: 'no-date.md', path: 'no-date.md', type: 'file' as const, sha: '3' },
+    ];
+    const sorted = sortEntries(entries, 'modified');
+    expect(sorted.map(e => e.name)).toEqual(['newer.md', 'older.md', 'no-date.md']);
+  });
+
+  it('formats dates cleanly', () => {
+    expect(formatDate('2026-10-31T12:34:56Z')).toBeTruthy();
+    expect(formatDate('')).toBe('');
   });
 });

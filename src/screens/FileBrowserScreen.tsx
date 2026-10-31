@@ -13,12 +13,14 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
-import { Entry, GitHubError, Repo, isEditable, isMarkdown } from '../lib/github';
+import { Entry, GitHubError, Repo, isEditable, isMarkdown, sortEntries } from '../lib/github';
 import { useFocusEffect, usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FileBrowser'>;
+
+type SortMode = 'name' | 'date' | 'type';
 
 export function FileBrowserScreen({ route, navigation }: Props) {
   const { repoFullName, path: initialPath = '' } = route.params;
@@ -33,6 +35,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+  const [sortMode, setSortMode] = useState<SortMode>('type');
 
   const latestLoad = useRef(0);
 
@@ -107,6 +110,8 @@ export function FileBrowserScreen({ route, navigation }: Props) {
 
   const breadcrumbs = currentPath ? currentPath.split('/') : [];
 
+  const sortedEntries = sortEntries(entries, sortMode);
+
   const styles = StyleSheet.create({
     container: {
       flex: 1,
@@ -138,6 +143,39 @@ export function FileBrowserScreen({ route, navigation }: Props) {
       fontSize: 14,
       color: theme.colors.text,
     },
+    sortRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      backgroundColor: theme.colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    sortLabel: {
+      fontSize: 13,
+      color: theme.colors.textMuted,
+      marginRight: 8,
+      fontWeight: '500',
+    },
+    sortBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 6,
+      backgroundColor: theme.colors.inputBg,
+      marginRight: 6,
+    },
+    sortBtnActive: {
+      backgroundColor: theme.colors.primary,
+    },
+    sortBtnText: {
+      fontSize: 13,
+      color: theme.colors.textMuted,
+      fontWeight: '500',
+    },
+    sortBtnTextActive: {
+      color: theme.colors.onPrimary,
+    },
     list: {
       padding: 16,
     },
@@ -164,10 +202,21 @@ export function FileBrowserScreen({ route, navigation }: Props) {
       fontSize: 18,
       marginRight: 12,
     },
+    rowInfo: {
+      flex: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
     rowText: {
       fontSize: 16,
       color: theme.colors.text,
       flex: 1,
+    },
+    rowDate: {
+      fontSize: 12,
+      color: theme.colors.textMuted,
+      marginLeft: 8,
     },
     rowMd: {
       fontWeight: '600',
@@ -288,6 +337,24 @@ export function FileBrowserScreen({ route, navigation }: Props) {
         })}
       </View>
 
+      <View style={styles.sortRow}>
+        <Text style={styles.sortLabel}>Sort:</Text>
+        {(['type', 'name', 'date'] as SortMode[]).map(mode => {
+          const active = sortMode === mode;
+          return (
+            <TouchableOpacity
+              key={mode}
+              style={[styles.sortBtn, active && styles.sortBtnActive]}
+              onPress={() => setSortMode(mode)}
+            >
+              <Text style={[styles.sortBtnText, active && styles.sortBtnTextActive]}>
+                {mode.charAt(0).toUpperCase() + mode.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {loading && !refreshing ? (
@@ -296,7 +363,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
         </View>
       ) : (
         <FlatList
-          data={entries}
+          data={sortedEntries}
           keyExtractor={item => item.path}
           refreshControl={
             <RefreshControl
@@ -316,9 +383,11 @@ export function FileBrowserScreen({ route, navigation }: Props) {
                 onPress={() => handlePress(item)}
               >
                 <Text style={styles.rowIcon}>{item.type === 'dir' ? '📁' : isMd ? '📝' : '📄'}</Text>
-                <Text style={[styles.rowText, isMd && styles.rowMd]} numberOfLines={1}>
-                  {item.name}
-                </Text>
+                <View style={styles.rowInfo}>
+                  <Text style={[styles.rowText, isMd && styles.rowMd]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                </View>
               </TouchableOpacity>
             );
           }}
