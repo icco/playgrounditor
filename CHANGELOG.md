@@ -1,3 +1,19 @@
+# [1.1.0](https://github.com/icco/[secure]/compare/v1.0.1...v1.1.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **ci:** cache android ndk to avoid corrupt downloads ([#11](https://github.com/icco/[secure]/issues/11)) ([b10b514](https://github.com/icco/[secure]/commit/b10b514f7565aa5f6108a57b22541abe4a320675))
+* protect drafts and make queued commits reliable ([#12](https://github.com/icco/[secure]/issues/12)) ([949511d](https://github.com/icco/[secure]/commit/949511d51872ffa847707886f301b3a8d0bc3153))
+
+
+### Features
+
+* add selectable themes and dark mode ([#8](https://github.com/icco/[secure]/issues/8)) ([cf67231](https://github.com/icco/[secure]/commit/cf67231942a9583a4b02767e0056399d696f6368))
+* **editor:** add CodeMirror syntax highlighting in WebView ([#9](https://github.com/icco/[secure]/issues/9)) ([6928c09](https://github.com/icco/[secure]/commit/6928c09ad2c24b57f42a294603b05521b90dcac1))
+* **editor:** add file sorting options for name and modified ([#7](https://github.com/icco/[secure]/issues/7)) ([2a22a22](https://github.com/icco/[secure]/commit/2a22a2233e7aaec354de74318439f8f41d08f9b8))
+* **editor:** work offline and stop losing edits ([#10](https://github.com/icco/[secure]/issues/10)) ([ec7e095](https://github.com/icco/[secure]/commit/ec7e095987dfa50749ea692059e32e3ff4aa0c6b))
+
 ## [1.0.1](https://github.com/icco/[secure]/compare/v1.0.0...v1.0.1) (2026-10-31)
 
 
