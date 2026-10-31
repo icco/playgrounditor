@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,6 +14,7 @@ import Markdown from 'react-native-markdown-display';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
 import { GitHubError, isMarkdown } from '../lib/github';
+import { CodeMirrorEditor } from '../components/CodeMirrorEditor';
 import { usePreventRemove } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
@@ -157,14 +157,6 @@ export function EditorScreen({ route, navigation }: Props) {
       fontSize: 13,
       fontWeight: '600',
       color: theme.colors.onPrimary,
-    },
-    editor: {
-      flex: 1,
-      padding: 16,
-      fontSize: 16,
-      color: theme.colors.text,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      lineHeight: 24,
     },
     previewContainer: {
       flex: 1,
@@ -330,16 +322,10 @@ export function EditorScreen({ route, navigation }: Props) {
           <Markdown style={markdownStyles}>{text || '*Empty file*'}</Markdown>
         </ScrollView>
       ) : (
-        <TextInput
-          style={styles.editor}
-          multiline
+        <CodeMirrorEditor
           value={text}
           onChangeText={setText}
-          placeholder={markdown ? 'Start writing markdown...' : 'Start writing...'}
-          placeholderTextColor={theme.colors.placeholder}
-          autoCapitalize={markdown ? 'sentences' : 'none'}
-          autoCorrect={markdown}
-          textAlignVertical="top"
+          path={path}
         />
       )}
 
