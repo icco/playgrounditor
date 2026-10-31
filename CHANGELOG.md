@@ -1,3 +1,16 @@
+# [1.2.0](https://github.com/icco/[secure]/compare/v1.1.0...v1.2.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* date every file when sorting by modified ([#14](https://github.com/icco/[secure]/issues/14)) ([8e366e1](https://github.com/icco/[secure]/commit/8e366e110947476a5419309b98a60786e28bf490))
+* keep the selected sort mode across folders ([#15](https://github.com/icco/[secure]/issues/15)) ([c145dfb](https://github.com/icco/[secure]/commit/c145dfba7c465e22b0f11b5917f464612521e1f2))
+
+
+### Features
+
+* **android:** add slide logo icons, splash and store graphics ([#13](https://github.com/icco/[secure]/issues/13)) ([d51cbf8](https://github.com/icco/[secure]/commit/d51cbf8f7a7660bdcda97dff47843db624e3435f))
+
 # [1.1.0](https://github.com/icco/[secure]/compare/v1.0.1...v1.1.0) (2026-10-31)
 
 
