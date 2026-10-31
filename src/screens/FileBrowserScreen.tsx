@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +31,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const { github } = useAuth();
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const queryClient = useQueryClient();
   // Lives in the persisted query cache so every open folder and later session share it.
   const { data: sortBy = 'name' } = useQuery<SortBy>({ queryKey: ['sortBy'], queryFn: skipToken });
@@ -53,7 +55,7 @@ export function FileBrowserScreen({ route, navigation }: Props) {
   const modifiedQuery = useQuery({
     queryKey: ['modified', repoFullName, currentPath, defaultBranch, paths],
     queryFn: () => github!.modifiedDates(repoFullName, paths, defaultBranch!),
-    enabled: !!github && !!defaultBranch && sortBy === 'modified' && paths.length > 0,
+    enabled: isFocused && !!github && !!defaultBranch && sortBy === 'modified' && paths.length > 0,
     staleTime: MODIFIED_STALE_MS,
   });
 
