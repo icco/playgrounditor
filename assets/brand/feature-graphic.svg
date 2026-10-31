@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+<rect width="1024" height="500" fill="#324049"/>
+<g fill="none" stroke-width="7" stroke-linecap="round" opacity=".45">
+  <path stroke="#3EC1CF" d="M700 -10C780 -10 800 40 850 90C900 140 960 130 1034 130"/>
+  <path stroke="#FF5E64" d="M660 -10C740 -10 760 70 810 120C860 170 950 170 1034 170"/>
+  <path stroke="#FF5E64" d="M-10 330C70 330 100 370 150 420C190 460 240 470 300 510"/>
+  <path stroke="#3EC1CF" d="M-10 370C50 370 70 400 110 440C140 470 170 490 210 510"/>
+</g>
+<svg x="92" y="110" width="280" height="280" viewBox="0 0 108 108">
+<g fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke="#3EC1CF" d="M31 46.5L23.5 54L31 61.5"/>
+  <path stroke="#FF5E64" d="M77 46.5L84.5 54L77 61.5"/>
+  <path stroke="#FF5E64" d="M48 40V36A4 4 0 0 1 56 36V41"/>
+  <path stroke="#3EC1CF" d="M38.4 48H46.4"/>
+  <path stroke="#FF5E64" d="M36.8 56H44.8M35.2 64H43.2"/>
+  <path stroke="#3EC1CF" d="M40 40V36A4 4 0 0 1 48 36V40M40 40L33 75M48 40L41 75"/>
+  <path stroke="#FF5E64" d="M46.5 42C53.5 42 56.5 48 59 54C62 62 64 75 71.5 75"/>
+  <path stroke="#3EC1CF" d="M53 42C60 42 63 48 65.5 54C68 60.5 69.5 67.5 74 68.5C76 69 77 71.5 77 75"/>
+  <path stroke="#3EC1CF" d="M71 32L66 46.5"/>
+</g>
+</svg>
+<text x="380" y="262" font-family="Avenir Next" font-weight="600" font-size="76" fill="#FFFFFF">playgrounditor</text>
+<text x="382" y="308" font-family="Avenir Next" font-size="27" fill="#C9D3DA">Edit your GitHub repos from your phone</text>
+</svg>
