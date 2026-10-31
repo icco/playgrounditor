@@ -64,6 +64,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Cache Android NDK
+        uses: actions/cache@v6
+        with:
+          path: /usr/local/lib/android/sdk/ndk/27.1.12297006
+          key: android-ndk-27.1.12297006-${{ runner.os }}
       - name: Build debug APK
         run: |
           cd android
