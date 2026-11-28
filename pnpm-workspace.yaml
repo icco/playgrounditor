@@ -3,3 +3,5 @@ allowBuilds:
   unrs-resolver: true
   '@parcel/watcher': true
   esbuild: false
+minimumReleaseAgeExclude:
+  - '@icco/*'
