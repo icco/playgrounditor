@@ -1,3 +1,10 @@
+## [1.3.4](https://github.com/icco/[secure]/compare/v1.3.3...v1.3.4) (2026-11-28)
+
+
+### Bug Fixes
+
+* **deps:** override vulnerable minimatch to 11.0.9 ([#28](https://github.com/icco/[secure]/issues/28)) ([643cb47](https://github.com/icco/[secure]/commit/643cb47d92f10ab01219ca58a45acfce35fa0741)), closes [#3](https://github.com/icco/[secure]/issues/3)
+
 ## [1.3.3](https://github.com/icco/[secure]/compare/v1.3.2...v1.3.3) (2026-11-22)
 
 ## [1.3.2](https://github.com/icco/[secure]/compare/v1.3.1...v1.3.2) (2026-11-14)
