@@ -10,7 +10,7 @@ concurrency:
 permissions:
   contents: read
 env:
-  NODE_VERSION: 26.0.0
+  NODE_VERSION: 26.13.1
 jobs:
   check-secrets:
     name: Check required secrets
